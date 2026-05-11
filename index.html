@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Level Up - Gamified Tasks</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header>
+            <h1 id="logo-home" style="cursor:pointer;" title="Zurück zum Dashboard">Level Up</h1>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <button id="btn-training-menu" class="btn-primary" style="padding: 4px 10px; font-size: 0.8rem; border-radius: 20px; background: #8b5cf6;">🏋️ Training</button>
+                <button id="btn-calendar" class="btn-secondary" style="padding: 4px 10px; font-size: 0.8rem; border-radius: 20px;">📅 Kalender</button>
+                <div class="season-info">Saison <span id="current-month">...</span></div>
+            </div>
+        </header>
+
+        <!-- Dashboard / Score Area -->
+        <div id="main-view">
+            <section class="dashboard-card glass-panel">
+                <div class="score-grid">
+                    <div class="score-item">
+                        <span class="score-label">Heute</span>
+                        <h2 id="score-today" class="score-value highlight">0</h2>
+                    </div>
+                    <div class="score-item">
+                        <span class="score-label">7-Tage-Ø Ziel</span>
+                        <h2 id="score-target" class="score-value">0</h2>
+                    </div>
+                </div>
+                <div class="progress-container">
+                    <div id="score-progress" class="progress-bar" style="width: 0%"></div>
+                </div>
+                <div id="streak-display" class="streak-display"></div>
+                <p id="dashboard-message" class="dashboard-msg">Erreiche deinen Durchschnitt!</p>
+            </section>
+
+            <!-- Tasks Area -->
+            <main class="tasks-section" style="margin-top: 24px;">
+                <div class="section-header">
+                    <h2>Meine Aufgaben</h2>
+                    <button id="btn-add-task" class="btn-primary">+ Neu</button>
+                </div>
+                
+                <ul id="task-list" class="task-list">
+                    <!-- Task Items will be injected here via JS -->
+                </ul>
+            </main>
+        </div>
+
+        <!-- Training Section (Hidden by default) -->
+        <main id="training-section" class="hidden">
+            <div class="section-header">
+                <h2>🏋️ Trainingsplan</h2>
+                <button id="btn-close-training" class="btn-secondary">Zurück</button>
+            </div>
+            
+            <div id="training-menu" class="training-menu">
+                <button class="btn-training-day" data-day="brust">Brust (Schulter, Trizeps)</button>
+                <button class="btn-training-day" data-day="beine">Beine (Waden, Bauch)</button>
+                <button class="btn-training-day" data-day="ruecken">Rücken (Schulter hinten, Bizeps)</button>
+                
+                <div id="custom-plans-container" style="display:flex; flex-direction:column; gap:15px; margin-top: 5px;"></div>
+                <button id="btn-create-custom" class="btn-secondary" style="margin-top: 10px; border-style: dashed;">+ Eigenes Training erstellen</button>
+            </div>
+
+            <div id="workout-view" class="hidden">
+                <h3 id="workout-title" style="margin-bottom: 15px; color: var(--primary-color);"></h3>
+                
+                <div class="input-group" style="margin-bottom: 20px;">
+                    <label for="workout-date">Wann hast du trainiert?</label>
+                    <input type="date" id="workout-date" required>
+                </div>
+
+                <div class="glass-panel" style="margin-bottom: 20px; padding: 15px;">
+                    <h4 style="margin-bottom: 10px;">Warm-Up & Mobilisierung</h4>
+                    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 10px;">Stepper/Fahrrad/Ruderergometer + World's greatest Stretch, Open Book, Handwalks, Gelenke, Prayer Stretch, Shoulder Blades.</p>
+                    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                        <input type="checkbox" id="workout-warmup" style="width: 20px; height: 20px;">
+                        <span>Warm-Up absolviert</span>
+                    </label>
+                </div>
+
+                <div id="workout-exercises">
+                    <!-- Exercises injected here -->
+                </div>
+
+                <button id="btn-finish-workout" class="btn-primary" style="width: 100%; margin-top: 20px; padding: 15px; font-size: 1.1rem; background: #10b981;">Training abschließen & Punkte sammeln</button>
+            </div>
+        </main>
+    </div>
+
+    <!-- Add Task Modal -->
+    <div id="add-task-modal" class="modal hidden">
+        <div class="modal-content glass-panel">
+            <h2>Neue Aufgabe</h2>
+            <form id="add-task-form">
+                <div class="input-group">
+                    <label for="task-name">Was möchtest du tun?</label>
+                    <input type="text" id="task-name" required placeholder="z.B. 30 Min Lesen">
+                </div>
+                <div class="input-group">
+                    <label for="task-points">Punkte</label>
+                    <input type="number" id="task-points" required placeholder="z.B. 10" step="0.5" value="10">
+                </div>
+                <div class="input-group">
+                    <label for="task-unit">Einheit</label>
+                    <input type="text" id="task-unit" placeholder="z.B. Minute, Ausführung" value="Ausführung">
+                </div>
+                <div class="input-group">
+                    <label for="task-category">Kategorie</label>
+                    <select id="task-category">
+                        <option value="todo">📌 ToDo (einmalig, oben)</option>
+                        <option value="routine" selected>🔁 Routine (täglich, mitte)</option>
+                        <option value="dontdo">🚫 DontDo (Minuspunkte, unten)</option>
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" id="btn-cancel-task" class="btn-secondary">Abbrechen</button>
+                    <button type="submit" class="btn-primary">Speichern</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit Task Modal -->
+    <div id="edit-task-modal" class="modal hidden">
+        <div class="modal-content glass-panel">
+            <h2>Aufgabe bearbeiten</h2>
+            <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:15px;">⚠️ Änderungen gelten nur für zukünftige Einträge – die bisherige Historie bleibt unverändert.</p>
+            <form id="edit-task-form">
+                <input type="hidden" id="edit-task-id">
+                <div class="input-group">
+                    <label for="edit-task-name">Name</label>
+                    <input type="text" id="edit-task-name" required>
+                </div>
+                <div class="input-group">
+                    <label for="edit-task-points">Punkte</label>
+                    <input type="number" id="edit-task-points" required step="0.5">
+                </div>
+                <div class="input-group">
+                    <label for="edit-task-unit">Einheit</label>
+                    <input type="text" id="edit-task-unit">
+                </div>
+                <div class="input-group">
+                    <label for="edit-task-category">Kategorie</label>
+                    <select id="edit-task-category">
+                        <option value="todo">📌 ToDo</option>
+                        <option value="routine">🔁 Routine</option>
+                        <option value="dontdo">🚫 DontDo</option>
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" id="btn-cancel-edit-task" class="btn-secondary">Abbrechen</button>
+                    <button type="submit" class="btn-primary">Speichern</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Quantity Input Modal -->
+    <div id="quantity-modal" class="modal hidden">
+        <div class="modal-content glass-panel" style="max-width: 320px;">
+            <h2 id="quantity-title">Menge eingeben</h2>
+            <p id="quantity-subtitle" style="font-size:0.85rem; color:var(--text-muted); margin-bottom:15px;"></p>
+            <form id="quantity-form">
+                <div class="input-group">
+                    <label for="quantity-input" id="quantity-label">Anzahl</label>
+                    <input type="number" id="quantity-input" required min="0.1" step="any" value="1" style="font-size:1.3rem; text-align:center; padding:15px;">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" id="btn-cancel-quantity" class="btn-secondary">Abbrechen</button>
+                    <button type="submit" class="btn-primary">Eintragen</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Calendar Modal -->
+    <div id="calendar-modal" class="modal hidden">
+        <div class="modal-content glass-panel" style="max-height: 80vh; display: flex; flex-direction: column;">
+            <div class="section-header">
+                <h2>Verlauf & Kalender</h2>
+                <button id="btn-close-calendar" class="btn-secondary" style="padding: 4px 10px; border-radius: 8px;">✕</button>
+            </div>
+            <div id="calendar-list" style="overflow-y: auto; flex-grow: 1; margin-top: 10px; display:flex; flex-direction:column; gap:15px; padding-right: 5px;">
+                <!-- History items injected here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Training Modal -->
+    <div id="custom-training-modal" class="modal hidden">
+        <div class="modal-content glass-panel" style="max-height: 90vh; overflow-y: auto;">
+            <h2>Eigenes Training</h2>
+            <form id="custom-training-form">
+                <div class="input-group">
+                    <label for="custom-name">Name des Trainings (z.B. Cardio, Push)</label>
+                    <input type="text" id="custom-name" required>
+                </div>
+                <div class="input-group">
+                    <label for="custom-factor">Punkte-Faktor (Standard: 50)</label>
+                    <input type="number" id="custom-factor" required value="50" min="1">
+                    <small style="color:var(--text-muted); font-size:0.8rem; display:block; margin-top:5px;">Formel: Reps × (1 + Gewicht/Faktor). Höherer Faktor = Gewicht gibt weniger Bonuspunkte.</small>
+                </div>
+                
+                <h4 style="margin-top: 20px; margin-bottom: 10px;">Übungen</h4>
+                <div id="custom-exercises-list">
+                    <!-- Übungen here -->
+                </div>
+                <button type="button" id="btn-add-custom-exercise" class="btn-secondary" style="width:100%; margin-bottom: 20px; font-size: 0.9rem; border-style:dashed;">+ Übung hinzufügen</button>
+
+                <div class="modal-actions">
+                    <button type="button" id="btn-cancel-custom" class="btn-secondary">Abbrechen</button>
+                    <button type="submit" class="btn-primary">Speichern</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script type="module" src="js/main.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('Service Worker registered', reg))
+                    .catch(err => console.error('Service Worker error', err));
+            });
+        }
+    </script>
+</body>
+</html>
