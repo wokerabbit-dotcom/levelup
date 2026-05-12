@@ -1,6 +1,7 @@
 // js/training.js
 import * as storage from './storage.js';
 
+// ─── Built-in Plans ───────────────────────────────────────────────────────────
 export const BUILT_IN_PLANS = {
     brust: {
         id: 'brust', name: 'Brust (Schulter, Trizeps)', factor: 50,
@@ -45,6 +46,65 @@ export const BUILT_IN_PLANS = {
     }
 };
 
+// ─── Exercise Library (global pool) ──────────────────────────────────────────
+// Each entry: { id, name, sets, targetReps, description }
+// This is seeded from BUILT_IN_PLANS and grows when users create custom exercises.
+
+export async function getExerciseLibrary() {
+    let lib = await storage.get('exerciseLibrary', null);
+    if (!lib) {
+        lib = {};
+        // Seed from built-in plans
+        Object.values(BUILT_IN_PLANS).forEach(plan => {
+            plan.exercises.forEach(ex => {
+                lib[ex.id] = { id: ex.id, name: ex.name, sets: ex.sets, targetReps: ex.targetReps, description: '' };
+            });
+        });
+        await storage.set('exerciseLibrary', lib);
+    }
+    return lib;
+}
+
+export async function saveExerciseToLibrary(exercise) {
+    const lib = await getExerciseLibrary();
+    lib[exercise.id] = {
+        id: exercise.id,
+        name: exercise.name,
+        sets: exercise.sets,
+        targetReps: exercise.targetReps,
+        description: exercise.description || ''
+    };
+    await storage.set('exerciseLibrary', lib);
+    return lib;
+}
+
+// ─── Per-Exercise Last Values ────────────────────────────────────────────────
+// Stored as: { [exerciseId]: { sets: [ {kg, reps}, ... ], comment: '' } }
+export async function getExerciseLastValues() {
+    return await storage.get('exerciseLastValues', {});
+}
+
+export async function saveExerciseLastValues(exId, setsData, comment) {
+    const vals = await getExerciseLastValues();
+    vals[exId] = { sets: setsData, comment: comment || '' };
+    await storage.set('exerciseLastValues', vals);
+}
+
+// ─── Plan Overrides (exercise swaps per plan) ────────────────────────────────
+// Stored as: { [planId]: { [slotIndex]: exerciseId } }
+export async function getPlanOverrides() {
+    return await storage.get('planOverrides', {});
+}
+
+export async function savePlanOverride(planId, slotIndex, exerciseId) {
+    const overrides = await getPlanOverrides();
+    if (!overrides[planId]) overrides[planId] = {};
+    overrides[planId][slotIndex] = exerciseId;
+    await storage.set('planOverrides', overrides);
+}
+
+// ─── Helper ──────────────────────────────────────────────────────────────────
+
 export function getPlan(id, customPlans) {
     if (BUILT_IN_PLANS[id]) return BUILT_IN_PLANS[id];
     return customPlans.find(p => p.id === id);
@@ -61,7 +121,8 @@ export function renderCustomPlansMenu(customPlans, container, onSelect) {
     });
 }
 
-export function openWorkout(dayId, customPlans, trainingHistory, els) {
+// ─── Open Workout (with dropdown swap, description, comment) ─────────────────
+export async function openWorkout(dayId, customPlans, trainingHistory, els) {
     const plan = getPlan(dayId, customPlans);
     const { trainingMenu, workoutView, workoutTitle, workoutDateInput, workoutWarmupInput, workoutExercisesEl } = els;
 
@@ -74,10 +135,21 @@ export function openWorkout(dayId, customPlans, trainingHistory, els) {
     workoutWarmupInput.checked = false;
     workoutExercisesEl.innerHTML = '';
 
+    const exerciseLib = await getExerciseLibrary();
+    const lastValues = await getExerciseLastValues();
+    const overrides = await getPlanOverrides();
+    const planOverrides = overrides[dayId] || {};
+
+    // Training history for deload/increase logic (per-plan)
     const hist = trainingHistory[dayId];
     const lastWorkout = hist && hist.length > 0 ? hist[hist.length - 1] : null;
 
-    plan.exercises.forEach(ex => {
+    plan.exercises.forEach((originalEx, slotIndex) => {
+        // Check if this slot has been overridden
+        const activeExId = planOverrides[slotIndex] || originalEx.id;
+        const libEntry = exerciseLib[activeExId];
+        const ex = libEntry ? { ...originalEx, id: libEntry.id, name: libEntry.name, sets: libEntry.sets, targetReps: libEntry.targetReps, description: libEntry.description || '' } : originalEx;
+
         const targetReps = parseInt(ex.targetReps) || 8;
         let isDeload = false, isIncrease = false;
 
@@ -92,36 +164,157 @@ export function openWorkout(dayId, customPlans, trainingHistory, els) {
         if (isDeload) hintsHtml = `<div class="deload-hint">🚨 <strong>Deload fällig!</strong> Nur <strong>2 Sätze × ${targetReps} Wdh</strong>, gleiches Gewicht.</div>`;
         else if (isIncrease) hintsHtml = `<div class="increase-hint">🔥 <strong>Zeit für mehr!</strong> Versuch +5% Gewicht für ${ex.sets}×${targetReps}.</div>`;
 
+        // Get last values — prefer per-exercise global store, fallback to plan history
+        const exLastValues = lastValues[ex.id];
+        const lastComment = exLastValues?.comment || '';
+
         const setsHtml = Array.from({ length: setsCount }).map((_, i) => {
-            const lastSet = lastWorkout?.exercises?.[ex.id]?.[i];
+            // Try global last values first, then plan history
+            const globalLastSet = exLastValues?.sets?.[i];
+            const histLastSet = lastWorkout?.exercises?.[ex.id]?.[i];
+            const lastSet = globalLastSet || histLastSet;
             const lastKg = lastSet?.kg || '';
             const lastReps = lastSet?.reps || '';
             const suggestKg = isIncrease && lastKg > 0 ? Math.round(lastKg * 1.05 * 2) / 2 : lastKg;
             return `<div class="set-row">
                 <span class="set-number">${i+1}.</span>
-                <input type="number" step="0.5" class="set-input set-kg" placeholder="kg (alt: ${lastKg||'–'})" value="${suggestKg}">
-                <input type="number" class="set-input set-reps" placeholder="Wdh (Ziel: ${lastReps||targetReps})">
+                <input type="number" step="0.5" class="set-input set-kg" placeholder="kg (z.B. ${lastKg||0})" value="${suggestKg}">
+                <input type="number" class="set-input set-reps" placeholder="Wdh (z.B. ${lastReps||targetReps})" value="">
             </div>`;
         }).join('');
+
+        // Build dropdown options from exercise library
+        const libEntries = Object.values(exerciseLib).sort((a,b) => a.name.localeCompare(b.name));
+        const optionsHtml = libEntries.map(le =>
+            `<option value="${le.id}" ${le.id === ex.id ? 'selected' : ''}>${le.name}</option>`
+        ).join('');
 
         const div = document.createElement('div');
         div.className = 'exercise-card';
         div.setAttribute('data-is-deload', isDeload ? 'true' : 'false');
+        div.setAttribute('data-slot-index', slotIndex);
         div.innerHTML = `
             <div class="exercise-header">
-                <span class="exercise-title">${ex.name}</span>
-                <span class="exercise-target">${setsCount}×${ex.targetReps} Wdh</span>
+                <div class="exercise-select-wrapper">
+                    <select class="exercise-dropdown" data-slot-index="${slotIndex}" data-original-id="${originalEx.id}">
+                        ${optionsHtml}
+                        <option value="__new__">＋ Neue Übung anlegen...</option>
+                    </select>
+                </div>
+                <span class="exercise-target">${setsCount} Sätze x ${ex.targetReps} Wdh</span>
             </div>
             ${hintsHtml}
-            <p class="placeholder-hint">Werte vom letzten Mal sind als Platzhalter hinterlegt.</p>
+            <div class="exercise-meta-section">
+                <details class="exercise-details">
+                    <summary class="exercise-details-summary">📋 Beschreibung & Notizen</summary>
+                    <div class="exercise-details-content">
+                        <div class="exercise-meta-field">
+                            <label>Beschreibung / Video-Link</label>
+                            <textarea class="exercise-description" placeholder="z.B. YouTube-Link oder Ausführungshinweise..." rows="2">${ex.description || ''}</textarea>
+                        </div>
+                        <div class="exercise-meta-field">
+                            <label>Kommentar / Notizen</label>
+                            <textarea class="exercise-comment" placeholder="z.B. 'Grip etwas breiter', 'Schulter zwickt'..." rows="2">${lastComment}</textarea>
+                        </div>
+                    </div>
+                </details>
+            </div>
             <div class="exercise-sets" data-ex-id="${ex.id}" data-target-sets="${ex.sets}" data-target-reps="${targetReps}">
                 ${setsHtml}
             </div>`;
         workoutExercisesEl.appendChild(div);
+
+        // ─── Dropdown change handler ─────────────────────────────────────
+        const dropdown = div.querySelector('.exercise-dropdown');
+        dropdown.addEventListener('change', async (e) => {
+            const selectedId = e.target.value;
+            if (selectedId === '__new__') {
+                // Show the new exercise inline modal
+                showNewExerciseModal(dayId, slotIndex, dropdown, exerciseLib, customPlans, trainingHistory, els);
+                return;
+            }
+            // Save override and re-render
+            await savePlanOverride(dayId, slotIndex, selectedId);
+            await openWorkout(dayId, customPlans, trainingHistory, els);
+        });
     });
 }
 
-export function finishWorkout(dayId, customPlans, trainingHistory, dailyHistory, els) {
+// ─── New Exercise Inline Modal ───────────────────────────────────────────────
+function showNewExerciseModal(dayId, slotIndex, dropdown, exerciseLib, customPlans, trainingHistory, els) {
+    // Remove any existing modal
+    const existingModal = document.getElementById('new-exercise-inline-modal');
+    if (existingModal) existingModal.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'new-exercise-inline-modal';
+    modal.className = 'modal';
+    modal.innerHTML = `
+        <div class="modal-content glass-panel" style="max-width:380px;">
+            <h2>Neue Übung anlegen</h2>
+            <form id="new-exercise-inline-form">
+                <div class="input-group">
+                    <label>Name der Übung</label>
+                    <input type="text" id="new-ex-name" required placeholder="z.B. Arnold Press">
+                </div>
+                <div class="input-group">
+                    <label>Sätze</label>
+                    <input type="number" id="new-ex-sets" required min="1" max="10" value="3">
+                </div>
+                <div class="input-group">
+                    <label>Ziel-Wiederholungen</label>
+                    <input type="number" id="new-ex-reps" required min="1" value="12">
+                </div>
+                <div class="input-group">
+                    <label>Beschreibung (optional)</label>
+                    <textarea id="new-ex-desc" rows="2" placeholder="z.B. Video-Link oder Ausführungshinweise..."></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" id="btn-cancel-new-ex" class="btn-secondary">Abbrechen</button>
+                    <button type="submit" class="btn-primary">Anlegen & auswählen</button>
+                </div>
+            </form>
+        </div>`;
+    document.body.appendChild(modal);
+
+    const form = modal.querySelector('#new-exercise-inline-form');
+    const btnCancel = modal.querySelector('#btn-cancel-new-ex');
+
+    btnCancel.addEventListener('click', () => {
+        modal.remove();
+        // Reset dropdown to previous value
+        const setsContainer = dropdown.closest('.exercise-card').querySelector('.exercise-sets');
+        dropdown.value = setsContainer.getAttribute('data-ex-id');
+    });
+
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            modal.remove();
+            const setsContainer = dropdown.closest('.exercise-card').querySelector('.exercise-sets');
+            dropdown.value = setsContainer.getAttribute('data-ex-id');
+        }
+    });
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = document.getElementById('new-ex-name').value.trim();
+        const sets = parseInt(document.getElementById('new-ex-sets').value) || 3;
+        const reps = parseInt(document.getElementById('new-ex-reps').value) || 12;
+        const desc = document.getElementById('new-ex-desc').value.trim();
+
+        if (!name) return;
+
+        const newId = 'ex_' + Date.now();
+        const newExercise = { id: newId, name, sets, targetReps: reps, description: desc };
+        await saveExerciseToLibrary(newExercise);
+        await savePlanOverride(dayId, slotIndex, newId);
+        modal.remove();
+        await openWorkout(dayId, customPlans, trainingHistory, els);
+    });
+}
+
+// ─── Finish Workout ──────────────────────────────────────────────────────────
+export async function finishWorkout(dayId, customPlans, trainingHistory, dailyHistory, els) {
     const plan = getPlan(dayId, customPlans);
     const { workoutDateInput, workoutWarmupInput, workoutExercisesEl } = els;
     const dateStr = workoutDateInput.value;
@@ -134,6 +327,8 @@ export function finishWorkout(dayId, customPlans, trainingHistory, dailyHistory,
     let improvedExercises = 0;
     const newWorkoutData = { date: dateStr, exercises: {}, states: {} };
 
+    const savePromises = [];
+
     workoutExercisesEl.querySelectorAll('.exercise-card').forEach(card => {
         const setContainer = card.querySelector('.exercise-sets');
         const exId = setContainer.getAttribute('data-ex-id');
@@ -141,8 +336,15 @@ export function finishWorkout(dayId, customPlans, trainingHistory, dailyHistory,
         const targetReps = parseInt(setContainer.getAttribute('data-target-reps'));
         const wasDeloadUI = card.getAttribute('data-is-deload') === 'true';
 
+        // Get comment and description
+        const commentEl = card.querySelector('.exercise-comment');
+        const descEl = card.querySelector('.exercise-description');
+        const comment = commentEl ? commentEl.value.trim() : '';
+        const description = descEl ? descEl.value.trim() : '';
+
         newWorkoutData.exercises[exId] = [];
         let curVolume = 0, lastVolume = 0, achievedAll = true, setsDone = 0;
+        const setsData = [];
 
         setContainer.querySelectorAll('.set-row').forEach((row, idx) => {
             const kg = parseFloat(row.querySelector('.set-kg').value) || 0;
@@ -150,6 +352,7 @@ export function finishWorkout(dayId, customPlans, trainingHistory, dailyHistory,
             if (reps > 0) setsDone++;
             if (reps < targetReps) achievedAll = false;
             newWorkoutData.exercises[exId].push({ kg, reps });
+            setsData.push({ kg, reps });
             points += reps * (1 + (kg / factor));
             curVolume += (kg > 0 ? kg : 1) * reps;
             const lset = lastWorkout?.exercises?.[exId]?.[idx];
@@ -159,13 +362,27 @@ export function finishWorkout(dayId, customPlans, trainingHistory, dailyHistory,
         if (setsDone < targetSets && !wasDeloadUI) achievedAll = false;
         newWorkoutData.states[exId] = { achievedTarget: achievedAll && !wasDeloadUI, wasDeload: wasDeloadUI };
         if (lastWorkout && curVolume > lastVolume && curVolume > 0 && !wasDeloadUI) improvedExercises++;
+
+        // Save per-exercise last values globally
+        savePromises.push(saveExerciseLastValues(exId, setsData, comment));
+
+        // Save description to library if changed
+        if (description) {
+            savePromises.push((async () => {
+                const lib = await getExerciseLibrary();
+                if (lib[exId]) {
+                    lib[exId].description = description;
+                    await storage.set('exerciseLibrary', lib);
+                }
+            })());
+        }
     });
 
     points += improvedExercises * 20;
 
     if (!trainingHistory[dayId]) trainingHistory[dayId] = [];
     trainingHistory[dayId].push(newWorkoutData);
-    storage.set('trainingHistory', trainingHistory);
+    await storage.set('trainingHistory', trainingHistory);
 
     if (!dailyHistory[dateStr]) dailyHistory[dateStr] = { score: 0, tasksDone: [] };
     dailyHistory[dateStr].score += points;
@@ -176,11 +393,15 @@ export function finishWorkout(dayId, customPlans, trainingHistory, dailyHistory,
         points: parseFloat(points.toFixed(1)),
         unit: improvedExercises > 0 ? `(${improvedExercises} Progressionen! 🔥)` : 'Basis'
     });
-    storage.set('dailyHistory', dailyHistory);
+    await storage.set('dailyHistory', dailyHistory);
+
+    // Wait for all save promises
+    await Promise.all(savePromises);
 
     return { points, improvedExercises };
 }
 
+// ─── Custom Plan Helpers ─────────────────────────────────────────────────────
 export function addCustomExerciseRow(container) {
     const row = document.createElement('div');
     row.className = 'custom-exercise-row';
@@ -193,17 +414,24 @@ export function addCustomExerciseRow(container) {
     container.appendChild(row);
 }
 
-export function saveCustomPlan(name, factor, exercisesList, customPlans) {
+export async function saveCustomPlan(name, factor, exercisesList, customPlans) {
     const exercises = [];
-    exercisesList.querySelectorAll('.custom-exercise-row').forEach((row, i) => {
-        const n = row.querySelector('.cx-name').value;
+    const rows = exercisesList.querySelectorAll('.custom-exercise-row');
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const n = row.querySelector('.cx-name').value.trim();
         const s = parseInt(row.querySelector('.cx-sets').value);
         const r = parseInt(row.querySelector('.cx-reps').value);
-        if (n && s && r) exercises.push({ id: 'cx_' + Date.now() + '_' + i, name: n, sets: s, targetReps: r });
-    });
+        if (n && s && r) {
+            const exId = 'cx_' + Date.now() + '_' + i;
+            exercises.push({ id: exId, name: n, sets: s, targetReps: r });
+            // Also add to global exercise library
+            await saveExerciseToLibrary({ id: exId, name: n, sets: s, targetReps: r, description: '' });
+        }
+    }
     if (!exercises.length) return null;
     const plan = { id: 'custom_' + Date.now(), name, factor: parseInt(factor) || 50, exercises };
     customPlans.push(plan);
-    storage.set('customPlans', customPlans);
+    await storage.set('customPlans', customPlans);
     return plan;
 }

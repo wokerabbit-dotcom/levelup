@@ -96,12 +96,15 @@ async function init() {
         await storage.set('tasks', tasks);
     }
 
+    // Initialize global exercise library
+    await Training.getExerciseLibrary();
+
     checkMonthlyReset();
     updateDashboard();
     renderTasks();
-    Training.renderCustomPlansMenu(customPlans, customPlansContainer, (id) => {
+    Training.renderCustomPlansMenu(customPlans, customPlansContainer, async (id) => {
         currentWorkoutDayId = id;
-        Training.openWorkout(id, customPlans, trainingHistory, workoutEls());
+        await Training.openWorkout(id, customPlans, trainingHistory, workoutEls());
     });
     setupEventListeners();
 
@@ -475,14 +478,14 @@ function setupEventListeners() {
     });
     btnCloseTraining.addEventListener('click', goHome);
     document.querySelectorAll('.btn-training-day').forEach(btn => {
-        btn.addEventListener('click', e => {
+        btn.addEventListener('click', async e => {
             currentWorkoutDayId = e.currentTarget.getAttribute('data-day');
-            Training.openWorkout(currentWorkoutDayId, customPlans, trainingHistory, workoutEls());
+            await Training.openWorkout(currentWorkoutDayId, customPlans, trainingHistory, workoutEls());
         });
     });
-    btnFinishWorkout.addEventListener('click', () => {
+    btnFinishWorkout.addEventListener('click', async () => {
         if (!currentWorkoutDayId) return;
-        const result = Training.finishWorkout(currentWorkoutDayId, customPlans, trainingHistory, dailyHistory, workoutEls());
+        const result = await Training.finishWorkout(currentWorkoutDayId, customPlans, trainingHistory, dailyHistory, workoutEls());
         updateDashboard();
         goHome();
         alert(`Stark! ${result.points.toFixed(1)} Punkte gesammelt! ${result.improvedExercises > 0 ? `(${result.improvedExercises}× Progression 🔥)` : ''}`);
@@ -496,18 +499,18 @@ function setupEventListeners() {
     });
     btnCancelCustom.addEventListener('click', () => { customTrainingModal.classList.add('hidden'); formCustomTraining.reset(); });
     btnAddCustomExercise.addEventListener('click', () => Training.addCustomExerciseRow(customExercisesList));
-    formCustomTraining.addEventListener('submit', e => {
+    formCustomTraining.addEventListener('submit', async e => {
         e.preventDefault();
-        const plan = Training.saveCustomPlan(
+        const plan = await Training.saveCustomPlan(
             document.getElementById('custom-name').value,
             document.getElementById('custom-factor').value,
             customExercisesList,
             customPlans
         );
         if (!plan) { alert('Bitte füge mindestens eine Übung hinzu.'); return; }
-        Training.renderCustomPlansMenu(customPlans, customPlansContainer, id => {
+        Training.renderCustomPlansMenu(customPlans, customPlansContainer, async id => {
             currentWorkoutDayId = id;
-            Training.openWorkout(id, customPlans, trainingHistory, workoutEls());
+            await Training.openWorkout(id, customPlans, trainingHistory, workoutEls());
         });
         customTrainingModal.classList.add('hidden'); formCustomTraining.reset();
     });
