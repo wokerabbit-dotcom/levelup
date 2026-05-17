@@ -79,10 +79,10 @@
 
                 <div class="glass-panel" style="margin-bottom: 20px; padding: 15px;">
                     <h4 style="margin-bottom: 10px;">Warm-Up & Mobilisierung</h4>
-                    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 10px;">Stepper/Fahrrad/Ruderergometer + World's greatest Stretch, Open Book, Handwalks, Gelenke, Prayer Stretch, Shoulder Blades.</p>
+                    <textarea id="workout-warmup-text" rows="3" style="width:100%; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 10px; background: rgba(0,0,0,0.1); border: 1px solid var(--glass-border); border-radius: 8px; padding: 8px; resize: vertical;" placeholder="Warm-Up Übungen hier eintragen...">Stepper/Fahrrad/Ruderergometer + World's greatest Stretch, Open Book, Handwalks, Gelenke, Prayer Stretch, Shoulder Blades.</textarea>
                     <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
                         <input type="checkbox" id="workout-warmup" style="width: 20px; height: 20px;">
-                        <span>Warm-Up absolviert</span>
+                        <span>Warm-Up absolviert (20 Pkt)</span>
                     </label>
                 </div>
 
@@ -120,6 +120,12 @@
                         <option value="dontdo">🚫 DontDo (Minuspunkte, unten)</option>
                     </select>
                 </div>
+                <div class="input-group" id="group-is-simple" style="display:none;">
+                    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; color: var(--text-main);">
+                        <input type="checkbox" id="task-is-simple" style="width: 20px; height: 20px;">
+                        <span>Einfaches Abhaken (nur 1x pro Tag)</span>
+                    </label>
+                </div>
                 <div class="modal-actions">
                     <button type="button" id="btn-cancel-task" class="btn-secondary">Abbrechen</button>
                     <button type="submit" class="btn-primary">Speichern</button>
@@ -154,6 +160,12 @@
                         <option value="routine">🔁 Routine</option>
                         <option value="dontdo">🚫 DontDo</option>
                     </select>
+                </div>
+                <div class="input-group" id="edit-group-is-simple" style="display:none;">
+                    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; color: var(--text-main);">
+                        <input type="checkbox" id="edit-task-is-simple" style="width: 20px; height: 20px;">
+                        <span>Einfaches Abhaken (nur 1x pro Tag)</span>
+                    </label>
                 </div>
                 <div class="modal-actions">
                     <button type="button" id="btn-cancel-edit-task" class="btn-secondary">Abbrechen</button>
@@ -223,6 +235,7 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
     <script type="module" src="js/main.js"></script>
     <script>
         if ('serviceWorker' in navigator) {

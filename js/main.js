@@ -113,12 +113,18 @@ async function init() {
 }
 
 function workoutEls() {
-    return { trainingMenu, workoutView, workoutTitle, workoutDateInput, workoutWarmupInput, workoutExercisesEl };
+    return { trainingMenu, workoutView, workoutTitle, workoutDateInput, workoutWarmupInput, workoutWarmupText: document.getElementById('workout-warmup-text'), workoutExercisesEl };
 }
 
 // ─── Core Logic ───────────────────────────────────────────────────────────────
+export function getLogicalDate(date = new Date()) {
+    const d = new Date(date);
+    d.setHours(d.getHours() - 3);
+    return d;
+}
+
 function getTodayString() {
-    const d = new Date();
+    const d = getLogicalDate();
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
@@ -130,7 +136,7 @@ function checkMonthlyReset() {
 }
 
 function calculate7DayAverage() {
-    const today = new Date(); today.setHours(0,0,0,0);
+    const today = getLogicalDate(); today.setHours(0,0,0,0);
     const currentMonth = today.getMonth();
     const currentYear = today.getFullYear();
     let total = 0, count = 0;
@@ -149,7 +155,7 @@ function getTodayScore() {
 }
 
 function calculateStreak() {
-    const today = new Date(); today.setHours(0,0,0,0);
+    const today = getLogicalDate(); today.setHours(0,0,0,0);
     let streak = 0;
     // Check today first
     const todayStr = getTodayString();
@@ -169,17 +175,17 @@ function calculateStreak() {
 }
 
 // ─── Task Operations ──────────────────────────────────────────────────────────
-function addTask(name, points, unit, category) {
-    const task = { id: Date.now().toString(), name, points: parseFloat(points), unit: unit || 'Ausführung', category: category || 'routine' };
+function addTask(name, points, unit, category, isSimple) {
+    const task = { id: Date.now().toString(), name, points: parseFloat(points), unit: unit || 'Ausführung', category: category || 'routine', isSimple: !!isSimple };
     tasks.push(task);
     storage.set('tasks', tasks);
     renderTasks();
 }
 
-function editTask(id, name, points, unit, category) {
+function editTask(id, name, points, unit, category, isSimple) {
     const idx = tasks.findIndex(t => t.id === id);
     if (idx === -1) return;
-    tasks[idx] = { ...tasks[idx], name, points: parseFloat(points), unit, category };
+    tasks[idx] = { ...tasks[idx], name, points: parseFloat(points), unit, category, isSimple: !!isSimple };
     storage.set('tasks', tasks);
     renderTasks();
 }
@@ -245,8 +251,7 @@ function updateDashboard() {
 }
 
 // ─── Drag & Drop State ────────────────────────────────────────────────────────
-let draggedTaskId = null;
-let draggedCategory = null;
+// Using SortableJS
 
 // ─── Task Rendering (sorted by category, drag-and-drop) ──────────────────────
 function renderTasks() {
@@ -256,6 +261,10 @@ function renderTasks() {
         { key: 'routine', label: '🔁 Routine', cls: 'routine-header' },
         { key: 'dontdo',  label: '🚫 DontDo',  cls: 'dontdo-header' },
     ];
+
+    const todayStr = getTodayString();
+    const todayHistory = dailyHistory[todayStr] || { tasksDone: [] };
+    const completedTaskIds = todayHistory.tasksDone.map(t => t.id);
 
     let hasAny = false;
     categories.forEach(cat => {
@@ -268,18 +277,24 @@ function renderTasks() {
         header.textContent = cat.label;
         taskListEl.appendChild(header);
 
+        const listContainer = document.createElement('div');
+        listContainer.className = 'task-group-container';
+        listContainer.setAttribute('data-category', cat.key);
+        taskListEl.appendChild(listContainer);
+
         group.forEach(task => {
             const isDontDo = cat.key === 'dontdo';
             const sign = isDontDo ? '−' : '+';
             const colorCls = isDontDo ? 'negative' : 'positive';
             const icon = isDontDo ? '✗' : '✓';
-            const isDone = cat.key === 'todo' && task.done;
+            
+            let isDone = false;
+            if (cat.key === 'todo' && task.done) isDone = true;
+            if (task.isSimple && completedTaskIds.includes(task.id)) isDone = true;
 
-            const li = document.createElement('li');
+            const li = document.createElement('div');
             li.className = `task-item ${cat.key}${isDone ? ' done' : ''}`;
-            li.setAttribute('draggable', 'true');
             li.setAttribute('data-task-id', task.id);
-            li.setAttribute('data-task-cat', cat.key);
             li.innerHTML = `
                 <div class="task-info">
                     <h3>${task.name}</h3>
@@ -290,41 +305,40 @@ function renderTasks() {
                     ${!isDone ? `<button class="task-action" data-id="${task.id}" title="Ausführen">${icon}</button>` : '<span style="color:var(--success-color);font-size:1.2rem;">✔</span>'}
                     <button class="task-action delete-btn" data-delete-id="${task.id}" title="Löschen" style="background:transparent;color:var(--text-muted);font-size:0.9rem;">🗑</button>
                 </div>`;
-
-            // Drag events
-            li.addEventListener('dragstart', e => {
-                draggedTaskId = task.id;
-                draggedCategory = cat.key;
-                li.classList.add('dragging');
-                e.dataTransfer.effectAllowed = 'move';
-            });
-            li.addEventListener('dragend', () => {
-                li.classList.remove('dragging');
-                draggedTaskId = null;
-                draggedCategory = null;
-                taskListEl.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
-            });
-            li.addEventListener('dragover', e => {
-                e.preventDefault();
-                const targetCat = li.getAttribute('data-task-cat');
-                if (targetCat !== draggedCategory) return;
-                e.dataTransfer.dropEffect = 'move';
-                li.classList.add('drag-over');
-            });
-            li.addEventListener('dragleave', () => {
-                li.classList.remove('drag-over');
-            });
-            li.addEventListener('drop', e => {
-                e.preventDefault();
-                li.classList.remove('drag-over');
-                const targetId = li.getAttribute('data-task-id');
-                const targetCat = li.getAttribute('data-task-cat');
-                if (!draggedTaskId || draggedTaskId === targetId || targetCat !== draggedCategory) return;
-                reorderTask(draggedTaskId, targetId);
-            });
-
-            taskListEl.appendChild(li);
+            
+            listContainer.appendChild(li);
         });
+
+        // Initialize Sortable
+        if (window.Sortable) {
+            new Sortable(listContainer, {
+                group: cat.key,
+                animation: 150,
+                onEnd: function (evt) {
+                    const itemEl = evt.item;
+                    const id = itemEl.getAttribute('data-task-id');
+                    
+                    // Rebuild tasks array based on new DOM order
+                    const newTasksOrder = [];
+                    // Keep original tasks order for other categories
+                    tasks.forEach(t => {
+                        if (t.category !== cat.key && t.category !== (cat.key === 'routine' ? undefined : 'routine')) {
+                            newTasksOrder.push(t);
+                        }
+                    });
+                    
+                    // Add this category's tasks in new order
+                    Array.from(listContainer.children).forEach(child => {
+                        const taskId = child.getAttribute('data-task-id');
+                        const taskObj = tasks.find(t => t.id === taskId);
+                        if (taskObj) newTasksOrder.push(taskObj);
+                    });
+                    
+                    tasks = newTasksOrder;
+                    storage.set('tasks', tasks);
+                }
+            });
+        }
     });
 
     if (!hasAny) {
@@ -337,7 +351,11 @@ function renderTasks() {
             const taskId = e.currentTarget.getAttribute('data-id');
             const task = tasks.find(t => t.id === taskId);
             if (!task) return;
-            openQuantityModal(task);
+            if (task.isSimple) {
+                completeTask(task.id, 1);
+            } else {
+                openQuantityModal(task);
+            }
         });
     });
     taskListEl.querySelectorAll('.delete-btn').forEach(btn => {
@@ -368,6 +386,8 @@ function openEditModal(id) {
     document.getElementById('edit-task-points').value   = task.points;
     document.getElementById('edit-task-unit').value     = task.unit;
     document.getElementById('edit-task-category').value = task.category || 'routine';
+    document.getElementById('edit-task-is-simple').checked = !!task.isSimple;
+    document.getElementById('edit-group-is-simple').style.display = (task.category || 'routine') === 'routine' ? 'block' : 'none';
     editModal.classList.remove('hidden');
 }
 
@@ -423,7 +443,15 @@ function setupEventListeners() {
     logoHome.addEventListener('click', goHome);
 
     // Add Task
-    btnAddTask.addEventListener('click', () => modal.classList.remove('hidden'));
+    document.getElementById('task-category').addEventListener('change', e => {
+        document.getElementById('group-is-simple').style.display = e.target.value === 'routine' ? 'block' : 'none';
+    });
+    btnAddTask.addEventListener('click', () => {
+        document.getElementById('task-category').value = 'routine';
+        document.getElementById('group-is-simple').style.display = 'block';
+        document.getElementById('task-is-simple').checked = false;
+        modal.classList.remove('hidden');
+    });
     btnCancelTask.addEventListener('click', () => { modal.classList.add('hidden'); formAddTask.reset(); });
     modal.addEventListener('click', e => { if (e.target===modal) { modal.classList.add('hidden'); formAddTask.reset(); } });
     formAddTask.addEventListener('submit', e => {
@@ -432,12 +460,16 @@ function setupEventListeners() {
             document.getElementById('task-name').value,
             document.getElementById('task-points').value,
             document.getElementById('task-unit').value,
-            document.getElementById('task-category').value
+            document.getElementById('task-category').value,
+            document.getElementById('task-is-simple').checked
         );
         modal.classList.add('hidden'); formAddTask.reset();
     });
 
     // Edit Task
+    document.getElementById('edit-task-category').addEventListener('change', e => {
+        document.getElementById('edit-group-is-simple').style.display = e.target.value === 'routine' ? 'block' : 'none';
+    });
     btnCancelEditTask.addEventListener('click', () => editModal.classList.add('hidden'));
     editModal.addEventListener('click', e => { if (e.target===editModal) editModal.classList.add('hidden'); });
     formEditTask.addEventListener('submit', e => {
@@ -447,7 +479,8 @@ function setupEventListeners() {
             document.getElementById('edit-task-name').value,
             document.getElementById('edit-task-points').value,
             document.getElementById('edit-task-unit').value,
-            document.getElementById('edit-task-category').value
+            document.getElementById('edit-task-category').value,
+            document.getElementById('edit-task-is-simple').checked
         );
         editModal.classList.add('hidden');
     });

@@ -516,20 +516,21 @@ button {
     color: var(--primary-color);
 }
 
-/* Drag & Drop */
-.task-item[draggable="true"] {
+/* SortableJS */
+.task-item {
     cursor: grab;
 }
-.task-item[draggable="true"]:active {
+.task-item:active {
     cursor: grabbing;
 }
-.task-item.dragging {
+.sortable-ghost {
     opacity: 0.4;
-    transform: scale(0.97);
+    background: rgba(255, 255, 255, 0.1) !important;
 }
-.task-item.drag-over {
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+.sortable-drag {
+    opacity: 1 !important;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5) !important;
+    transform: scale(1.02);
 }
 
 /* Streak */

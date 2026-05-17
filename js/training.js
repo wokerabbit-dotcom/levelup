@@ -105,9 +105,43 @@ export async function savePlanOverride(planId, slotIndex, exerciseId) {
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
-export function getPlan(id, customPlans) {
-    if (BUILT_IN_PLANS[id]) return BUILT_IN_PLANS[id];
-    return customPlans.find(p => p.id === id);
+export async function getResolvedPlan(id, customPlans) {
+    let basePlan = BUILT_IN_PLANS[id] || customPlans.find(p => p.id === id);
+    if (!basePlan) return null;
+    let plan = JSON.parse(JSON.stringify(basePlan));
+    
+    if (BUILT_IN_PLANS[id]) {
+        const modified = await storage.get('modifiedBuiltInPlans', {});
+        if (modified[id]) {
+            plan.exercises = modified[id];
+            return plan;
+        }
+    } else {
+        const p = customPlans.find(p => p.id === id);
+        if (p) plan = JSON.parse(JSON.stringify(p));
+    }
+    
+    // Apply legacy overrides if no modified array
+    const overrides = await storage.get('planOverrides', {});
+    const planOverrides = overrides[id] || {};
+    plan.exercises = plan.exercises.map((ex, i) => {
+        return planOverrides[i] ? { ...ex, id: planOverrides[i] } : ex;
+    });
+    return plan;
+}
+
+export async function savePlanExercises(planId, exercises, customPlans) {
+    if (BUILT_IN_PLANS[planId]) {
+        const modified = await storage.get('modifiedBuiltInPlans', {});
+        modified[planId] = exercises;
+        await storage.set('modifiedBuiltInPlans', modified);
+    } else {
+        const idx = customPlans.findIndex(p => p.id === planId);
+        if (idx !== -1) {
+            customPlans[idx].exercises = exercises;
+            await storage.set('customPlans', customPlans);
+        }
+    }
 }
 
 export function renderCustomPlansMenu(customPlans, container, onSelect) {
@@ -123,32 +157,31 @@ export function renderCustomPlansMenu(customPlans, container, onSelect) {
 
 // ─── Open Workout (with dropdown swap, description, comment) ─────────────────
 export async function openWorkout(dayId, customPlans, trainingHistory, els) {
-    const plan = getPlan(dayId, customPlans);
-    const { trainingMenu, workoutView, workoutTitle, workoutDateInput, workoutWarmupInput, workoutExercisesEl } = els;
+    const plan = await getResolvedPlan(dayId, customPlans);
+    const { trainingMenu, workoutView, workoutTitle, workoutDateInput, workoutWarmupInput, workoutWarmupText, workoutExercisesEl } = els;
 
     trainingMenu.classList.add('hidden');
     workoutView.classList.remove('hidden');
     workoutTitle.textContent = plan.name;
 
     const d = new Date();
+    d.setHours(d.getHours() - 3);
     workoutDateInput.value = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     workoutWarmupInput.checked = false;
+    workoutWarmupText.value = await storage.get('warmupText', "Stepper/Fahrrad/Ruderergometer + World's greatest Stretch, Open Book, Handwalks, Gelenke, Prayer Stretch, Shoulder Blades.");
     workoutExercisesEl.innerHTML = '';
 
     const exerciseLib = await getExerciseLibrary();
     const lastValues = await getExerciseLastValues();
-    const overrides = await getPlanOverrides();
-    const planOverrides = overrides[dayId] || {};
 
     // Training history for deload/increase logic (per-plan)
     const hist = trainingHistory[dayId];
     const lastWorkout = hist && hist.length > 0 ? hist[hist.length - 1] : null;
 
-    plan.exercises.forEach((originalEx, slotIndex) => {
-        // Check if this slot has been overridden
-        const activeExId = planOverrides[slotIndex] || originalEx.id;
+    plan.exercises.forEach((exItem, slotIndex) => {
+        const activeExId = exItem.id;
         const libEntry = exerciseLib[activeExId];
-        const ex = libEntry ? { ...originalEx, id: libEntry.id, name: libEntry.name, sets: libEntry.sets, targetReps: libEntry.targetReps, description: libEntry.description || '' } : originalEx;
+        const ex = libEntry ? { ...exItem, id: libEntry.id, name: libEntry.name, sets: exItem.sets || libEntry.sets, targetReps: exItem.targetReps || libEntry.targetReps, description: libEntry.description || '' } : exItem;
 
         const targetReps = parseInt(ex.targetReps) || 8;
         let isDeload = false, isIncrease = false;
@@ -196,12 +229,15 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
         div.innerHTML = `
             <div class="exercise-header">
                 <div class="exercise-select-wrapper">
-                    <select class="exercise-dropdown" data-slot-index="${slotIndex}" data-original-id="${originalEx.id}">
+                    <select class="exercise-dropdown" data-slot-index="${slotIndex}" data-original-id="${ex.id}">
                         ${optionsHtml}
                         <option value="__new__">＋ Neue Übung anlegen...</option>
                     </select>
                 </div>
-                <span class="exercise-target">${setsCount} Sätze x ${ex.targetReps} Wdh</span>
+                <div style="display:flex; align-items:center; gap: 8px;">
+                    <span class="exercise-target">${setsCount} Sätze x ${ex.targetReps} Wdh</span>
+                    <button class="btn-remove-ex-slot" data-slot="${slotIndex}" style="background:transparent;border:none;color:var(--danger-color);font-size:1.1rem;cursor:pointer;padding:0;" title="Übung entfernen">🗑</button>
+                </div>
             </div>
             ${hintsHtml}
             <div class="exercise-meta-section">
@@ -229,15 +265,47 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
         dropdown.addEventListener('change', async (e) => {
             const selectedId = e.target.value;
             if (selectedId === '__new__') {
-                // Show the new exercise inline modal
                 showNewExerciseModal(dayId, slotIndex, dropdown, exerciseLib, customPlans, trainingHistory, els);
                 return;
             }
-            // Save override and re-render
-            await savePlanOverride(dayId, slotIndex, selectedId);
+            plan.exercises[slotIndex] = { ...plan.exercises[slotIndex], id: selectedId };
+            await savePlanExercises(dayId, plan.exercises, customPlans);
             await openWorkout(dayId, customPlans, trainingHistory, els);
         });
+
+        div.querySelector('.btn-remove-ex-slot').addEventListener('click', async () => {
+            if (confirm('Diese Übung aus dem Plan entfernen?')) {
+                plan.exercises.splice(slotIndex, 1);
+                await savePlanExercises(dayId, plan.exercises, customPlans);
+                await openWorkout(dayId, customPlans, trainingHistory, els);
+            }
+        });
     });
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'btn-secondary';
+    addBtn.style.cssText = 'width: 100%; margin-top: 15px; border-style: dashed; font-size: 0.9rem;';
+    addBtn.textContent = '+ Übung hinzufügen';
+    addBtn.addEventListener('click', async () => {
+        showNewExerciseModal(dayId, plan.exercises.length, null, exerciseLib, customPlans, trainingHistory, els);
+    });
+    workoutExercisesEl.appendChild(addBtn);
+
+    if (window.Sortable) {
+        new Sortable(workoutExercisesEl, {
+            animation: 150,
+            draggable: '.exercise-card',
+            onEnd: async function () {
+                const newExercises = [];
+                Array.from(workoutExercisesEl.querySelectorAll('.exercise-card')).forEach(card => {
+                    const slot = parseInt(card.getAttribute('data-slot-index'));
+                    newExercises.push(plan.exercises[slot]);
+                });
+                await savePlanExercises(dayId, newExercises, customPlans);
+                await openWorkout(dayId, customPlans, trainingHistory, els);
+            }
+        });
+    }
 }
 
 // ─── New Exercise Inline Modal ───────────────────────────────────────────────
@@ -282,16 +350,19 @@ function showNewExerciseModal(dayId, slotIndex, dropdown, exerciseLib, customPla
 
     btnCancel.addEventListener('click', () => {
         modal.remove();
-        // Reset dropdown to previous value
-        const setsContainer = dropdown.closest('.exercise-card').querySelector('.exercise-sets');
-        dropdown.value = setsContainer.getAttribute('data-ex-id');
+        if (dropdown) {
+            const setsContainer = dropdown.closest('.exercise-card').querySelector('.exercise-sets');
+            dropdown.value = setsContainer.getAttribute('data-ex-id');
+        }
     });
 
     modal.addEventListener('click', (e) => {
         if (e.target === modal) {
             modal.remove();
-            const setsContainer = dropdown.closest('.exercise-card').querySelector('.exercise-sets');
-            dropdown.value = setsContainer.getAttribute('data-ex-id');
+            if (dropdown) {
+                const setsContainer = dropdown.closest('.exercise-card').querySelector('.exercise-sets');
+                dropdown.value = setsContainer.getAttribute('data-ex-id');
+            }
         }
     });
 
@@ -307,7 +378,15 @@ function showNewExerciseModal(dayId, slotIndex, dropdown, exerciseLib, customPla
         const newId = 'ex_' + Date.now();
         const newExercise = { id: newId, name, sets, targetReps: reps, description: desc };
         await saveExerciseToLibrary(newExercise);
-        await savePlanOverride(dayId, slotIndex, newId);
+        
+        const plan = await getResolvedPlan(dayId, customPlans);
+        if (slotIndex >= plan.exercises.length) {
+            plan.exercises.push({ id: newId, name, sets, targetReps: reps });
+        } else {
+            plan.exercises[slotIndex] = { ...plan.exercises[slotIndex], id: newId };
+        }
+        await savePlanExercises(dayId, plan.exercises, customPlans);
+        
         modal.remove();
         await openWorkout(dayId, customPlans, trainingHistory, els);
     });
@@ -315,15 +394,18 @@ function showNewExerciseModal(dayId, slotIndex, dropdown, exerciseLib, customPla
 
 // ─── Finish Workout ──────────────────────────────────────────────────────────
 export async function finishWorkout(dayId, customPlans, trainingHistory, dailyHistory, els) {
-    const plan = getPlan(dayId, customPlans);
-    const { workoutDateInput, workoutWarmupInput, workoutExercisesEl } = els;
+    const plan = await getResolvedPlan(dayId, customPlans);
+    const { workoutDateInput, workoutWarmupInput, workoutWarmupText, workoutExercisesEl } = els;
     const dateStr = workoutDateInput.value;
     const factor = plan.factor || 50;
 
     const hist = trainingHistory[dayId];
     const lastWorkout = hist && hist.length > 0 ? hist[hist.length - 1] : null;
 
-    let points = workoutWarmupInput.checked ? 10 : 0;
+    let points = workoutWarmupInput.checked ? 20 : 0;
+    
+    // Save warmup text
+    await storage.set('warmupText', workoutWarmupText.value);
     let improvedExercises = 0;
     const newWorkoutData = { date: dateStr, exercises: {}, states: {} };
 
