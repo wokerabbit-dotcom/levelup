@@ -314,6 +314,8 @@ function renderTasks() {
             new Sortable(listContainer, {
                 group: cat.key,
                 animation: 150,
+                delay: 800, // 800ms delay so scrolling works
+                delayOnTouchOnly: true, // Only apply delay on touch devices
                 onEnd: function (evt) {
                     const itemEl = evt.item;
                     const id = itemEl.getAttribute('data-task-id');

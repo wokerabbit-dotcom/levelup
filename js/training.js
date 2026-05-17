@@ -295,6 +295,8 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
         new Sortable(workoutExercisesEl, {
             animation: 150,
             draggable: '.exercise-card',
+            delay: 800, // 800ms delay for touch
+            delayOnTouchOnly: true,
             onEnd: async function () {
                 const newExercises = [];
                 Array.from(workoutExercisesEl.querySelectorAll('.exercise-card')).forEach(card => {
