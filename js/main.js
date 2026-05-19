@@ -31,6 +31,34 @@ let trainingHistory = {};
 let customPlans = [];
 let currentWorkoutDayId = null;
 let pendingTaskId = null; // for quantity modal
+const sortableInstances = []; // tracked so we can destroy on re-render
+
+// Escape user-controlled strings before injecting into innerHTML.
+function escapeHtml(s) {
+    return String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// Lightweight toast for surfacing errors (e.g. localStorage quota exceeded).
+function showToast(msg, type = 'error') {
+    let host = document.getElementById('toast-host');
+    if (!host) {
+        host = document.createElement('div');
+        host.id = 'toast-host';
+        host.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2000;display:flex;flex-direction:column;gap:8px;pointer-events:none;';
+        document.body.appendChild(host);
+    }
+    const el = document.createElement('div');
+    el.textContent = msg;
+    const bg = type === 'error' ? '#b91c1c' : '#0f766e';
+    el.style.cssText = `pointer-events:auto;background:${bg};color:#fff;padding:10px 16px;border-radius:8px;font-size:0.9rem;box-shadow:0 4px 12px rgba(0,0,0,0.3);max-width:90vw;`;
+    host.appendChild(el);
+    setTimeout(() => el.remove(), 6000);
+}
 
 // ─── DOM References ───────────────────────────────────────────────────────────
 const scoreTodayEl   = document.getElementById('score-today');
@@ -85,6 +113,15 @@ const btnCancelQuantity = document.getElementById('btn-cancel-quantity');
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
+    // Surface localStorage failures (quota exceeded, private mode) to the user
+    // instead of silently losing data.
+    window.addEventListener('storage-error', e => {
+        const { isQuota } = e.detail || {};
+        showToast(isQuota
+            ? 'Speicher voll – Daten konnten nicht gesichert werden. Bitte alte Einträge exportieren/löschen.'
+            : 'Speicher-Fehler – Änderungen wurden evtl. nicht gesichert.');
+    });
+
     tasks          = await storage.get('tasks', []);
     dailyHistory   = await storage.get('dailyHistory', {});
     trainingHistory= await storage.get('trainingHistory', {});
@@ -109,7 +146,9 @@ async function init() {
     setupEventListeners();
 
     const months = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
-    currentMonthEl.textContent = months[new Date().getMonth()];
+    // Use logical date so the "Saison" label matches what calculate7DayAverage uses
+    // (3h offset → day rolls over at 03:00 local time).
+    currentMonthEl.textContent = months[getLogicalDate().getMonth()];
 }
 
 function workoutEls() {
@@ -255,6 +294,11 @@ function updateDashboard() {
 
 // ─── Task Rendering (sorted by category, drag-and-drop) ──────────────────────
 function renderTasks() {
+    // Destroy previous Sortable instances before wiping the DOM to prevent listener leak.
+    while (sortableInstances.length) {
+        const inst = sortableInstances.pop();
+        try { inst.destroy(); } catch (_) { /* already detached */ }
+    }
     taskListEl.innerHTML = '';
     const categories = [
         { key: 'todo',    label: '📌 ToDo',    cls: 'todo-header' },
@@ -295,23 +339,26 @@ function renderTasks() {
             const li = document.createElement('div');
             li.className = `task-item ${cat.key}${isDone ? ' done' : ''}`;
             li.setAttribute('data-task-id', task.id);
+            const nameSafe = escapeHtml(task.name);
+            const unitSafe = escapeHtml(task.unit);
+            const idSafe = escapeHtml(task.id);
             li.innerHTML = `
                 <div class="task-info">
-                    <h3>${task.name}</h3>
-                    <span class="task-points ${colorCls}">${sign}${task.points} pro ${task.unit}</span>
+                    <h3>${nameSafe}</h3>
+                    <span class="task-points ${colorCls}">${sign}${task.points} pro ${unitSafe}</span>
                 </div>
                 <div style="display:flex;gap:6px;align-items:center;">
-                    <button class="btn-edit-task" data-edit-id="${task.id}" title="Bearbeiten">✏️</button>
-                    ${!isDone ? `<button class="task-action" data-id="${task.id}" title="Ausführen">${icon}</button>` : '<span style="color:var(--success-color);font-size:1.2rem;">✔</span>'}
-                    <button class="task-action delete-btn" data-delete-id="${task.id}" title="Löschen" style="background:transparent;color:var(--text-muted);font-size:0.9rem;">🗑</button>
+                    <button class="btn-edit-task" data-edit-id="${idSafe}" title="Bearbeiten">✏️</button>
+                    ${!isDone ? `<button class="task-action" data-id="${idSafe}" title="Ausführen">${icon}</button>` : '<span style="color:var(--success-color);font-size:1.2rem;">✔</span>'}
+                    <button class="task-action delete-btn" data-delete-id="${idSafe}" title="Löschen" style="background:transparent;color:var(--text-muted);font-size:0.9rem;">🗑</button>
                 </div>`;
             
             listContainer.appendChild(li);
         });
 
-        // Initialize Sortable
+        // Initialize Sortable (instance tracked so it can be destroyed on re-render)
         if (window.Sortable) {
-            new Sortable(listContainer, {
+            sortableInstances.push(new Sortable(listContainer, {
                 group: cat.key,
                 animation: 150,
                 delay: 800, // 800ms delay so scrolling works
@@ -339,7 +386,7 @@ function renderTasks() {
                     tasks = newTasksOrder;
                     storage.set('tasks', tasks);
                 }
-            });
+            }));
         }
     });
 
@@ -423,7 +470,7 @@ function renderCalendar() {
             ? '<ul class="history-task-list">' + day.tasksDone.map(t => {
                 const s = t.points > 0 ? '+' : '';
                 const c = t.points > 0 ? 'var(--success-color)' : 'var(--danger-color)';
-                return `<li class="history-task-item"><span>${t.name}</span><span style="color:${c}">${s}${t.points} Pkt</span></li>`;
+                return `<li class="history-task-item"><span>${escapeHtml(t.name)}</span><span style="color:${c}">${s}${t.points} Pkt</span></li>`;
             }).join('') + '</ul>'
             : '<p class="history-task-list">Keine Einträge.</p>';
         const div = document.createElement('div');
