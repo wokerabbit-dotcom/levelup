@@ -12,10 +12,10 @@
     <div class="app-container">
         <!-- Header -->
         <header>
-            <h1 id="logo-home" style="cursor:pointer;" title="Zurück zum Dashboard">Level Up</h1>
-            <div style="display:flex; gap:10px; align-items:center;">
-                <button id="btn-training-menu" class="btn-primary" style="padding: 4px 10px; font-size: 0.8rem; border-radius: 20px; background: #8b5cf6;">🏋️ Training</button>
-                <button id="btn-calendar" class="btn-secondary" style="padding: 4px 10px; font-size: 0.8rem; border-radius: 20px;">📅 Kalender</button>
+            <h1 id="logo-home" title="Zurück zum Dashboard">Level Up</h1>
+            <div class="header-actions">
+                <button id="btn-training-menu" class="btn-primary btn-pill btn-pill--training">🏋️ Training</button>
+                <button id="btn-calendar" class="btn-secondary btn-pill">📅 Kalender</button>
                 <div class="season-info">Saison <span id="current-month">...</span></div>
             </div>
         </header>
@@ -26,7 +26,7 @@
                 <div class="score-grid">
                     <div class="score-item">
                         <span class="score-label">Heute</span>
-                        <h2 id="score-today" class="score-value highlight">0</h2>
+                        <h2 id="score-today" class="score-value highlight" aria-live="polite" aria-atomic="true">0</h2>
                     </div>
                     <div class="score-item">
                         <span class="score-label">7-Tage-Ø Ziel</span>
@@ -34,14 +34,16 @@
                     </div>
                 </div>
                 <div class="progress-container">
-                    <div id="score-progress" class="progress-bar" style="width: 0%"></div>
+                    <div id="score-progress" class="progress-bar" style="width: 0%"
+                         role="progressbar" aria-label="Fortschritt zum Tagesziel"
+                         aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
                 </div>
                 <div id="streak-display" class="streak-display"></div>
                 <p id="dashboard-message" class="dashboard-msg">Erreiche deinen Durchschnitt!</p>
             </section>
 
             <!-- Tasks Area -->
-            <main class="tasks-section" style="margin-top: 24px;">
+            <main class="tasks-section">
                 <div class="section-header">
                     <h2>Meine Aufgaben</h2>
                     <button id="btn-add-task" class="btn-primary">+ Neu</button>
@@ -96,9 +98,9 @@
     </div>
 
     <!-- Add Task Modal -->
-    <div id="add-task-modal" class="modal hidden">
+    <div id="add-task-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="add-task-title" aria-hidden="true">
         <div class="modal-content glass-panel">
-            <h2>Neue Aufgabe</h2>
+            <h2 id="add-task-title">Neue Aufgabe</h2>
             <form id="add-task-form">
                 <div class="input-group">
                     <label for="task-name">Was möchtest du tun?</label>
@@ -135,9 +137,9 @@
     </div>
 
     <!-- Edit Task Modal -->
-    <div id="edit-task-modal" class="modal hidden">
+    <div id="edit-task-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="edit-task-title" aria-hidden="true">
         <div class="modal-content glass-panel">
-            <h2>Aufgabe bearbeiten</h2>
+            <h2 id="edit-task-title">Aufgabe bearbeiten</h2>
             <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:15px;">⚠️ Änderungen gelten nur für zukünftige Einträge – die bisherige Historie bleibt unverändert.</p>
             <form id="edit-task-form">
                 <input type="hidden" id="edit-task-id">
@@ -176,7 +178,7 @@
     </div>
 
     <!-- Quantity Input Modal -->
-    <div id="quantity-modal" class="modal hidden">
+    <div id="quantity-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="quantity-title" aria-hidden="true">
         <div class="modal-content glass-panel" style="max-width: 320px;">
             <h2 id="quantity-title">Menge eingeben</h2>
             <p id="quantity-subtitle" style="font-size:0.85rem; color:var(--text-muted); margin-bottom:15px;"></p>
@@ -194,10 +196,10 @@
     </div>
 
     <!-- Calendar Modal -->
-    <div id="calendar-modal" class="modal hidden">
+    <div id="calendar-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="calendar-title" aria-hidden="true">
         <div class="modal-content glass-panel" style="max-height: 80vh; display: flex; flex-direction: column;">
             <div class="section-header">
-                <h2>Verlauf & Kalender</h2>
+                <h2 id="calendar-title">Verlauf & Kalender</h2>
                 <button id="btn-close-calendar" class="btn-secondary" style="padding: 4px 10px; border-radius: 8px;">✕</button>
             </div>
             <div id="calendar-list" style="overflow-y: auto; flex-grow: 1; margin-top: 10px; display:flex; flex-direction:column; gap:15px; padding-right: 5px;">
@@ -207,9 +209,9 @@
     </div>
 
     <!-- Custom Training Modal -->
-    <div id="custom-training-modal" class="modal hidden">
+    <div id="custom-training-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="custom-training-title" aria-hidden="true">
         <div class="modal-content glass-panel" style="max-height: 90vh; overflow-y: auto;">
-            <h2>Eigenes Training</h2>
+            <h2 id="custom-training-title">Eigenes Training</h2>
             <form id="custom-training-form">
                 <div class="input-group">
                     <label for="custom-name">Name des Trainings (z.B. Cardio, Push)</label>
@@ -232,6 +234,18 @@
                     <button type="submit" class="btn-primary">Speichern</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Confirm Modal (stilkonform statt window.confirm) -->
+    <div id="confirm-modal" class="modal hidden" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message" aria-hidden="true">
+        <div class="modal-content glass-panel" style="max-width: 360px;">
+            <h2 id="confirm-title">Bestätigen</h2>
+            <p id="confirm-message" style="color:var(--text-muted); margin-bottom:18px;"></p>
+            <div class="modal-actions">
+                <button type="button" id="btn-confirm-cancel" class="btn-secondary">Abbrechen</button>
+                <button type="button" id="btn-confirm-ok" class="btn-primary">OK</button>
+            </div>
         </div>
     </div>
 

@@ -31,6 +31,111 @@ let trainingHistory = {};
 let customPlans = [];
 let currentWorkoutDayId = null;
 let pendingTaskId = null; // for quantity modal
+const sortableInstances = []; // tracked so we can destroy on re-render
+
+// Escape user-controlled strings before injecting into innerHTML.
+function escapeHtml(s) {
+    return String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// Modal open/close helpers with focus management. Tracks the previously
+// focused element so it can be restored on close.
+let lastFocusedBeforeModal = null;
+function openModal(modalEl) {
+    lastFocusedBeforeModal = document.activeElement;
+    modalEl.classList.remove('hidden');
+    modalEl.setAttribute('aria-hidden', 'false');
+    const focusable = modalEl.querySelector('input:not([type=hidden]), select, textarea, button');
+    if (focusable) focusable.focus();
+}
+function closeModal(modalEl, form) {
+    modalEl.classList.add('hidden');
+    modalEl.setAttribute('aria-hidden', 'true');
+    if (form) form.reset();
+    if (lastFocusedBeforeModal && typeof lastFocusedBeforeModal.focus === 'function') {
+        lastFocusedBeforeModal.focus();
+    }
+    lastFocusedBeforeModal = null;
+}
+
+// Wire the standard "cancel button + backdrop click resets form and closes
+// modal" pattern shared by every dialog. Returns the close handler so callers
+// can also invoke it after a submit.
+function wireModalDismiss(modalEl, { cancelBtn, form, onClose } = {}) {
+    const close = () => {
+        closeModal(modalEl, form);
+        if (onClose) onClose();
+    };
+    if (cancelBtn) cancelBtn.addEventListener('click', close);
+    modalEl.addEventListener('click', e => { if (e.target === modalEl) close(); });
+    return close;
+}
+
+// Stilkonformer Confirm-Dialog. Returns a Promise<boolean>.
+function customConfirm(message, { title = 'Bestätigen', okLabel = 'OK', okClass = 'btn-primary' } = {}) {
+    const modalEl = document.getElementById('confirm-modal');
+    const msgEl = document.getElementById('confirm-message');
+    const titleEl = document.getElementById('confirm-title');
+    const okBtn = document.getElementById('btn-confirm-ok');
+    const cancelBtn = document.getElementById('btn-confirm-cancel');
+    titleEl.textContent = title;
+    msgEl.textContent = message;
+    okBtn.className = okClass;
+    okBtn.textContent = okLabel;
+    return new Promise(resolve => {
+        const cleanup = (result) => {
+            okBtn.removeEventListener('click', onOk);
+            cancelBtn.removeEventListener('click', onCancel);
+            modalEl.removeEventListener('click', onBackdrop);
+            closeModal(modalEl);
+            resolve(result);
+        };
+        const onOk = () => cleanup(true);
+        const onCancel = () => cleanup(false);
+        const onBackdrop = (e) => { if (e.target === modalEl) cleanup(false); };
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+        modalEl.addEventListener('click', onBackdrop);
+        openModal(modalEl);
+        okBtn.focus();
+    });
+}
+
+// Plays a brief success animation + (where supported) vibrates the device.
+// Tracks the last celebrated day so repeated updates on the same day don't
+// re-trigger the animation.
+let lastCelebratedDay = null;
+function celebrateTargetReached() {
+    if (navigator.vibrate) {
+        try { navigator.vibrate([60, 40, 120]); } catch (_) { /* no-op */ }
+    }
+    scoreTodayEl.classList.remove('celebrate');
+    // Force reflow so re-adding the class restarts the animation.
+    void scoreTodayEl.offsetWidth;
+    scoreTodayEl.classList.add('celebrate');
+}
+
+// Lightweight toast for surfacing errors (e.g. localStorage quota exceeded).
+function showToast(msg, type = 'error') {
+    let host = document.getElementById('toast-host');
+    if (!host) {
+        host = document.createElement('div');
+        host.id = 'toast-host';
+        host.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2000;display:flex;flex-direction:column;gap:8px;pointer-events:none;';
+        document.body.appendChild(host);
+    }
+    const el = document.createElement('div');
+    el.textContent = msg;
+    const bg = type === 'error' ? '#b91c1c' : '#0f766e';
+    el.style.cssText = `pointer-events:auto;background:${bg};color:#fff;padding:10px 16px;border-radius:8px;font-size:0.9rem;box-shadow:0 4px 12px rgba(0,0,0,0.3);max-width:90vw;`;
+    host.appendChild(el);
+    setTimeout(() => el.remove(), 6000);
+}
 
 // ─── DOM References ───────────────────────────────────────────────────────────
 const scoreTodayEl   = document.getElementById('score-today');
@@ -85,6 +190,15 @@ const btnCancelQuantity = document.getElementById('btn-cancel-quantity');
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
+    // Surface localStorage failures (quota exceeded, private mode) to the user
+    // instead of silently losing data.
+    window.addEventListener('storage-error', e => {
+        const { isQuota } = e.detail || {};
+        showToast(isQuota
+            ? 'Speicher voll – Daten konnten nicht gesichert werden. Bitte alte Einträge exportieren/löschen.'
+            : 'Speicher-Fehler – Änderungen wurden evtl. nicht gesichert.');
+    });
+
     tasks          = await storage.get('tasks', []);
     dailyHistory   = await storage.get('dailyHistory', {});
     trainingHistory= await storage.get('trainingHistory', {});
@@ -100,6 +214,13 @@ async function init() {
     await Training.getExerciseLibrary();
 
     checkMonthlyReset();
+    // Suppress the target-reached animation on initial load if the user is
+    // already above the target — they reached it earlier, not just now.
+    const initialScore = getTodayScore();
+    const initialTarget = calculate7DayAverage();
+    if (initialTarget > 0 && initialScore >= initialTarget) {
+        lastCelebratedDay = getTodayString();
+    }
     updateDashboard();
     renderTasks();
     Training.renderCustomPlansMenu(customPlans, customPlansContainer, async (id) => {
@@ -107,9 +228,12 @@ async function init() {
         await Training.openWorkout(id, customPlans, trainingHistory, workoutEls());
     });
     setupEventListeners();
+    setupEscapeKeyHandler();
 
     const months = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
-    currentMonthEl.textContent = months[new Date().getMonth()];
+    // Use logical date so the "Saison" label matches what calculate7DayAverage uses
+    // (3h offset → day rolls over at 03:00 local time).
+    currentMonthEl.textContent = months[getLogicalDate().getMonth()];
 }
 
 function workoutEls() {
@@ -123,9 +247,20 @@ export function getLogicalDate(date = new Date()) {
     return d;
 }
 
-function getTodayString() {
-    const d = getLogicalDate();
+// YYYY-MM-DD key from a Date object. Zero-padded so the lexicographic
+// order matches chronological order.
+function formatDateKey(d) {
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function getTodayString() {
+    return formatDateKey(getLogicalDate());
+}
+
+// A day counts as "active" if at least one task entry exists. Negative-only days
+// (score ≤ 0 from DontDo tasks) still count as activity for streak purposes.
+function isDayActive(key) {
+    return !!dailyHistory[key]?.tasksDone?.length;
 }
 
 function checkMonthlyReset() {
@@ -144,7 +279,7 @@ function calculate7DayAverage() {
         const d = new Date(today); d.setDate(d.getDate() - i);
         // Only count days within the current month (monthly reset)
         if (d.getMonth() !== currentMonth || d.getFullYear() !== currentYear) continue;
-        const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        const key = formatDateKey(d);
         if (dailyHistory[key]) { total += dailyHistory[key].score; count++; }
     }
     return count === 0 ? 0 : Math.round(total / count);
@@ -154,22 +289,18 @@ function getTodayScore() {
     return dailyHistory[getTodayString()]?.score || 0;
 }
 
+// Streak = consecutive past active days. "Today" only adds to the count if it
+// is itself active — an empty today doesn't break the streak (the user might
+// just not have logged anything yet).
 function calculateStreak() {
     const today = getLogicalDate(); today.setHours(0,0,0,0);
-    let streak = 0;
-    // Check today first
     const todayStr = getTodayString();
-    const todayData = dailyHistory[todayStr];
-    if (todayData && todayData.score > 0) streak = 1;
-    // Then go backwards from yesterday
-    for (let i = 1; i <= 365; i++) {
+    const startOffset = isDayActive(todayStr) ? 0 : 1;
+    let streak = 0;
+    for (let i = startOffset; i <= 365; i++) {
         const d = new Date(today); d.setDate(d.getDate() - i);
-        const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-        if (dailyHistory[key] && dailyHistory[key].score > 0) {
-            streak++;
-        } else {
-            break;
-        }
+        if (isDayActive(formatDateKey(d))) streak++;
+        else break;
     }
     return streak;
 }
@@ -203,11 +334,13 @@ function completeTask(taskId, quantity = 1) {
     if (!dailyHistory[todayStr]) dailyHistory[todayStr] = { score: 0, tasksDone: [] };
 
     const basePts = task.category === 'dontdo' ? -Math.abs(task.points) : task.points;
-    const totalPts = basePts * quantity;
-    dailyHistory[todayStr].score += totalPts;
+    const totalPts = parseFloat((basePts * quantity).toFixed(2));
+    // Round the running score on store too, otherwise floating-point drift
+    // accumulates (e.g. 0.1 + 0.2 → 0.30000000000000004 across many tasks).
+    dailyHistory[todayStr].score = parseFloat((dailyHistory[todayStr].score + totalPts).toFixed(2));
     dailyHistory[todayStr].tasksDone.push({
         id: task.id, name: task.name, timestamp: Date.now(),
-        points: parseFloat(totalPts.toFixed(2)),
+        points: totalPts,
         unit: quantity !== 1 ? `${quantity}× ${task.unit}` : task.unit
     });
     storage.set('dailyHistory', dailyHistory);
@@ -227,8 +360,11 @@ function updateDashboard() {
     const score = getTodayScore(), target = calculate7DayAverage();
     scoreTodayEl.textContent  = parseFloat(score.toFixed(1));
     scoreTargetEl.textContent = target;
+    // Mark negative score in red so it doesn't silently sit at "0" visually.
+    scoreTodayEl.classList.toggle('negative', score < 0);
     const pct = target > 0 ? Math.min((Math.max(0,score)/target)*100,100) : (score>0?100:0);
     scoreProgressEl.style.width = `${pct}%`;
+    scoreProgressEl.setAttribute('aria-valuenow', Math.round(pct));
 
     // Streak
     const streak = calculateStreak();
@@ -241,6 +377,12 @@ function updateDashboard() {
     if (score >= target && target > 0) {
         dashboardMsgEl.textContent = "🔥 Tagesziel erreicht! Stark!";
         dashboardMsgEl.style.color = "var(--success-color)";
+        // Celebrate the first crossing of the target each logical day.
+        const todayStr = getTodayString();
+        if (lastCelebratedDay !== todayStr) {
+            lastCelebratedDay = todayStr;
+            celebrateTargetReached();
+        }
     } else if (score >= target) {
         dashboardMsgEl.textContent = "Sammle Punkte, um einen Durchschnitt aufzubauen.";
         dashboardMsgEl.style.color = "var(--text-muted)";
@@ -255,6 +397,11 @@ function updateDashboard() {
 
 // ─── Task Rendering (sorted by category, drag-and-drop) ──────────────────────
 function renderTasks() {
+    // Destroy previous Sortable instances before wiping the DOM to prevent listener leak.
+    while (sortableInstances.length) {
+        const inst = sortableInstances.pop();
+        try { inst.destroy(); } catch (_) { /* already detached */ }
+    }
     taskListEl.innerHTML = '';
     const categories = [
         { key: 'todo',    label: '📌 ToDo',    cls: 'todo-header' },
@@ -295,23 +442,27 @@ function renderTasks() {
             const li = document.createElement('div');
             li.className = `task-item ${cat.key}${isDone ? ' done' : ''}`;
             li.setAttribute('data-task-id', task.id);
+            const nameSafe = escapeHtml(task.name);
+            const unitSafe = escapeHtml(task.unit);
+            const idSafe = escapeHtml(task.id);
+            const actionLabel = isDontDo ? `${task.name} als gemacht eintragen (Minuspunkte)` : `${task.name} ausführen`;
             li.innerHTML = `
                 <div class="task-info">
-                    <h3>${task.name}</h3>
-                    <span class="task-points ${colorCls}">${sign}${task.points} pro ${task.unit}</span>
+                    <h3>${nameSafe}</h3>
+                    <span class="task-points ${colorCls}">${sign}${task.points} pro ${unitSafe}</span>
                 </div>
                 <div style="display:flex;gap:6px;align-items:center;">
-                    <button class="btn-edit-task" data-edit-id="${task.id}" title="Bearbeiten">✏️</button>
-                    ${!isDone ? `<button class="task-action" data-id="${task.id}" title="Ausführen">${icon}</button>` : '<span style="color:var(--success-color);font-size:1.2rem;">✔</span>'}
-                    <button class="task-action delete-btn" data-delete-id="${task.id}" title="Löschen" style="background:transparent;color:var(--text-muted);font-size:0.9rem;">🗑</button>
+                    <button class="btn-edit-task" data-edit-id="${idSafe}" title="Bearbeiten" aria-label="${escapeHtml(task.name)} bearbeiten">✏️</button>
+                    ${!isDone ? `<button class="task-action" data-id="${idSafe}" title="Ausführen" aria-label="${escapeHtml(actionLabel)}">${icon}</button>` : '<span style="color:var(--success-color);font-size:1.2rem;" aria-label="erledigt">✔</span>'}
+                    <button class="task-action delete-btn" data-delete-id="${idSafe}" title="Löschen" aria-label="${escapeHtml(task.name)} löschen" style="background:transparent;color:var(--text-muted);font-size:0.9rem;">🗑</button>
                 </div>`;
             
             listContainer.appendChild(li);
         });
 
-        // Initialize Sortable
+        // Initialize Sortable (instance tracked so it can be destroyed on re-render)
         if (window.Sortable) {
-            new Sortable(listContainer, {
+            sortableInstances.push(new Sortable(listContainer, {
                 group: cat.key,
                 animation: 150,
                 delay: 800, // 800ms delay so scrolling works
@@ -339,7 +490,7 @@ function renderTasks() {
                     tasks = newTasksOrder;
                     storage.set('tasks', tasks);
                 }
-            });
+            }));
         }
     });
 
@@ -361,23 +512,19 @@ function renderTasks() {
         });
     });
     taskListEl.querySelectorAll('.delete-btn').forEach(btn => {
-        btn.addEventListener('click', e => {
-            if (confirm('Aufgabe löschen?')) deleteTask(e.currentTarget.getAttribute('data-delete-id'));
+        btn.addEventListener('click', async e => {
+            const id = e.currentTarget.getAttribute('data-delete-id');
+            const task = tasks.find(t => t.id === id);
+            const ok = await customConfirm(
+                `"${task?.name ?? 'Aufgabe'}" wirklich löschen?`,
+                { okLabel: 'Löschen', okClass: 'btn-primary danger' }
+            );
+            if (ok) deleteTask(id);
         });
     });
     taskListEl.querySelectorAll('.btn-edit-task').forEach(btn => {
         btn.addEventListener('click', e => openEditModal(e.currentTarget.getAttribute('data-edit-id')));
     });
-}
-
-function reorderTask(draggedId, targetId) {
-    const fromIdx = tasks.findIndex(t => t.id === draggedId);
-    const toIdx = tasks.findIndex(t => t.id === targetId);
-    if (fromIdx === -1 || toIdx === -1) return;
-    const [moved] = tasks.splice(fromIdx, 1);
-    tasks.splice(toIdx, 0, moved);
-    storage.set('tasks', tasks);
-    renderTasks();
 }
 
 function openEditModal(id) {
@@ -390,7 +537,7 @@ function openEditModal(id) {
     document.getElementById('edit-task-category').value = task.category || 'routine';
     document.getElementById('edit-task-is-simple').checked = !!task.isSimple;
     document.getElementById('edit-group-is-simple').style.display = (task.category || 'routine') === 'routine' ? 'block' : 'none';
-    editModal.classList.remove('hidden');
+    openModal(editModal);
 }
 
 function openQuantityModal(task) {
@@ -402,7 +549,7 @@ function openQuantityModal(task) {
         : `Wie viele ${task.unit}? (+${task.points} pro ${task.unit})`;
     quantityLabel.textContent = `Anzahl (${task.unit})`;
     quantityInput.value = '1';
-    quantityModal.classList.remove('hidden');
+    openModal(quantityModal);
     quantityInput.focus();
     quantityInput.select();
 }
@@ -410,7 +557,9 @@ function openQuantityModal(task) {
 // ─── Calendar ─────────────────────────────────────────────────────────────────
 function renderCalendar() {
     calendarListEl.innerHTML = '';
-    const dates = Object.keys(dailyHistory).sort((a,b) => new Date(b)-new Date(a));
+    // Keys are zero-padded ISO strings (YYYY-MM-DD), so lexicographic order
+    // is chronological — no Date parsing needed.
+    const dates = Object.keys(dailyHistory).sort((a, b) => b.localeCompare(a));
     if (!dates.length) {
         calendarListEl.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:20px;">Noch keine Historie.</div>';
         return;
@@ -423,7 +572,7 @@ function renderCalendar() {
             ? '<ul class="history-task-list">' + day.tasksDone.map(t => {
                 const s = t.points > 0 ? '+' : '';
                 const c = t.points > 0 ? 'var(--success-color)' : 'var(--danger-color)';
-                return `<li class="history-task-item"><span>${t.name}</span><span style="color:${c}">${s}${t.points} Pkt</span></li>`;
+                return `<li class="history-task-item"><span>${escapeHtml(t.name)}</span><span style="color:${c}">${s}${t.points} Pkt</span></li>`;
             }).join('') + '</ul>'
             : '<p class="history-task-list">Keine Einträge.</p>';
         const div = document.createElement('div');
@@ -438,7 +587,39 @@ function goHome() {
     trainingSection.classList.add('hidden');
     calendarModal.classList.add('hidden');
     customTrainingModal.classList.add('hidden');
+    // Reset transient modal state so the quantity dialog doesn't reopen with
+    // a stale pending task next time.
+    quantityModal.classList.add('hidden');
+    modal.classList.add('hidden');
+    editModal.classList.add('hidden');
+    pendingTaskId = null;
+    formAddTask.reset();
+    formEditTask.reset();
     mainView.classList.remove('hidden');
+}
+
+// Close the top-most visible modal on Escape. Iterates in reverse z-stack
+// order (last-rendered confirm modal first) so nested confirms close before
+// their parent dialogs.
+function setupEscapeKeyHandler() {
+    const modalIds = ['confirm-modal', 'quantity-modal', 'edit-task-modal', 'add-task-modal', 'custom-training-modal', 'calendar-modal'];
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        for (const id of modalIds) {
+            const m = document.getElementById(id);
+            if (m && !m.classList.contains('hidden')) {
+                // Confirm modal manages its own cleanup via the cancel button.
+                if (id === 'confirm-modal') {
+                    document.getElementById('btn-confirm-cancel').click();
+                } else {
+                    closeModal(m);
+                    if (id === 'quantity-modal') pendingTaskId = null;
+                }
+                e.preventDefault();
+                return;
+            }
+        }
+    });
 }
 
 function setupEventListeners() {
@@ -452,10 +633,9 @@ function setupEventListeners() {
         document.getElementById('task-category').value = 'routine';
         document.getElementById('group-is-simple').style.display = 'block';
         document.getElementById('task-is-simple').checked = false;
-        modal.classList.remove('hidden');
+        openModal(modal);
     });
-    btnCancelTask.addEventListener('click', () => { modal.classList.add('hidden'); formAddTask.reset(); });
-    modal.addEventListener('click', e => { if (e.target===modal) { modal.classList.add('hidden'); formAddTask.reset(); } });
+    const closeAdd = wireModalDismiss(modal, { cancelBtn: btnCancelTask, form: formAddTask });
     formAddTask.addEventListener('submit', e => {
         e.preventDefault();
         addTask(
@@ -465,15 +645,14 @@ function setupEventListeners() {
             document.getElementById('task-category').value,
             document.getElementById('task-is-simple').checked
         );
-        modal.classList.add('hidden'); formAddTask.reset();
+        closeAdd();
     });
 
     // Edit Task
     document.getElementById('edit-task-category').addEventListener('change', e => {
         document.getElementById('edit-group-is-simple').style.display = e.target.value === 'routine' ? 'block' : 'none';
     });
-    btnCancelEditTask.addEventListener('click', () => editModal.classList.add('hidden'));
-    editModal.addEventListener('click', e => { if (e.target===editModal) editModal.classList.add('hidden'); });
+    const closeEdit = wireModalDismiss(editModal, { cancelBtn: btnCancelEditTask });
     formEditTask.addEventListener('submit', e => {
         e.preventDefault();
         editTask(
@@ -484,24 +663,27 @@ function setupEventListeners() {
             document.getElementById('edit-task-category').value,
             document.getElementById('edit-task-is-simple').checked
         );
-        editModal.classList.add('hidden');
+        closeEdit();
     });
 
     // Calendar
-    btnCalendar.addEventListener('click', () => { renderCalendar(); calendarModal.classList.remove('hidden'); });
-    btnCloseCalendar.addEventListener('click', () => calendarModal.classList.add('hidden'));
-    calendarModal.addEventListener('click', e => { if (e.target===calendarModal) calendarModal.classList.add('hidden'); });
+    btnCalendar.addEventListener('click', () => { renderCalendar(); openModal(calendarModal); });
+    wireModalDismiss(calendarModal, { cancelBtn: btnCloseCalendar });
 
     // Quantity Modal
-    btnCancelQuantity.addEventListener('click', () => { quantityModal.classList.add('hidden'); pendingTaskId = null; });
-    quantityModal.addEventListener('click', e => { if (e.target===quantityModal) { quantityModal.classList.add('hidden'); pendingTaskId = null; } });
+    const closeQty = wireModalDismiss(quantityModal, { cancelBtn: btnCancelQuantity, onClose: () => { pendingTaskId = null; } });
     quantityForm.addEventListener('submit', e => {
         e.preventDefault();
         if (!pendingTaskId) return;
-        const qty = parseFloat(quantityInput.value) || 1;
+        const qty = parseFloat(quantityInput.value);
+        if (!isFinite(qty) || qty <= 0) {
+            showToast('Bitte eine positive Zahl eingeben.');
+            quantityInput.focus();
+            quantityInput.select();
+            return;
+        }
         completeTask(pendingTaskId, qty);
-        quantityModal.classList.add('hidden');
-        pendingTaskId = null;
+        closeQty();
     });
 
     // Training
@@ -530,9 +712,9 @@ function setupEventListeners() {
     btnCreateCustom.addEventListener('click', () => {
         customExercisesList.innerHTML = '';
         Training.addCustomExerciseRow(customExercisesList);
-        customTrainingModal.classList.remove('hidden');
+        openModal(customTrainingModal);
     });
-    btnCancelCustom.addEventListener('click', () => { customTrainingModal.classList.add('hidden'); formCustomTraining.reset(); });
+    const closeCustom = wireModalDismiss(customTrainingModal, { cancelBtn: btnCancelCustom, form: formCustomTraining });
     btnAddCustomExercise.addEventListener('click', () => Training.addCustomExerciseRow(customExercisesList));
     formCustomTraining.addEventListener('submit', async e => {
         e.preventDefault();
@@ -542,12 +724,12 @@ function setupEventListeners() {
             customExercisesList,
             customPlans
         );
-        if (!plan) { alert('Bitte füge mindestens eine Übung hinzu.'); return; }
+        if (!plan) { showToast('Bitte füge mindestens eine Übung hinzu.'); return; }
         Training.renderCustomPlansMenu(customPlans, customPlansContainer, async id => {
             currentWorkoutDayId = id;
             await Training.openWorkout(id, customPlans, trainingHistory, workoutEls());
         });
-        customTrainingModal.classList.add('hidden'); formCustomTraining.reset();
+        closeCustom();
     });
 }
 

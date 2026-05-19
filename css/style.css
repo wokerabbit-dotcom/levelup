@@ -47,12 +47,36 @@ header {
     padding: 10px 0;
 }
 
+.header-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
 h1 {
     font-size: 1.8rem;
     font-weight: 700;
     background: linear-gradient(to right, #60a5fa, #a78bfa);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
+}
+
+#logo-home {
+    cursor: pointer;
+}
+
+/* Compact pill button used in the header (Training / Calendar). */
+.btn-pill {
+    padding: 4px 10px;
+    font-size: 0.8rem;
+    border-radius: 20px;
+}
+.btn-pill--training {
+    background: #8b5cf6;
+}
+
+.tasks-section {
+    margin-top: 24px;
 }
 
 .season-info {
@@ -102,6 +126,36 @@ h1 {
 
 .score-value.highlight {
     color: var(--primary-color);
+}
+
+/* Negative-today score (DontDo dragged net score below zero) */
+.score-value.negative {
+    color: var(--danger-color);
+}
+
+/* Brief celebration animation when the daily target is crossed. */
+.score-value.celebrate {
+    animation: score-celebrate 0.9s ease-out 1;
+}
+@keyframes score-celebrate {
+    0%   { transform: scale(1);    text-shadow: none; }
+    35%  { transform: scale(1.18); text-shadow: 0 0 18px var(--success-color); color: var(--success-color); }
+    70%  { transform: scale(0.98); text-shadow: 0 0 8px  var(--success-color); }
+    100% { transform: scale(1);    text-shadow: none; }
+}
+
+/* Destructive variant of the primary button (used by customConfirm). */
+.btn-primary.danger {
+    background: var(--danger-color);
+}
+.btn-primary.danger:hover {
+    background: #b91c1c;
+}
+
+/* Focus ring for keyboard navigation (a11y). */
+:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
 }
 
 .progress-container {
