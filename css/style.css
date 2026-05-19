@@ -65,13 +65,18 @@ h1 {
     cursor: pointer;
 }
 
-/* Compact pill button used in the header (Training / Calendar). */
-.btn-pill {
+/* Compact pill button used in the header (Training / Calendar).
+   Selectors are deliberately scoped to .btn-primary / .btn-secondary so they
+   beat the cascade order of the global button rules further down. */
+.btn-primary.btn-pill,
+.btn-secondary.btn-pill {
     padding: 4px 10px;
     font-size: 0.8rem;
     border-radius: 20px;
+    font-weight: 600;
+    line-height: 1.2;
 }
-.btn-pill--training {
+.btn-primary.btn-pill--training {
     background: #8b5cf6;
 }
 
@@ -442,7 +447,14 @@ button {
 .exercise-header {
     display: flex;
     justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
     margin-bottom: 10px;
+}
+.exercise-header > .exercise-select-wrapper {
+    min-width: 0;
+    flex: 1 1 60%;
 }
 .exercise-title {
     font-weight: 600;
@@ -465,6 +477,7 @@ button {
 }
 .set-input {
     flex: 1;
+    min-width: 0; /* allow inputs to shrink below intrinsic placeholder width */
     padding: 8px;
     border-radius: 6px;
     border: 1px solid var(--glass-border);
@@ -802,4 +815,57 @@ button {
 #new-exercise-inline-modal textarea:focus {
     outline: none;
     border-color: var(--primary-color);
+}
+
+/* ─── Mobile-Responsive ───────────────────────────────────────────
+   Below ~480 CSS pixels the header and exercise cards previously
+   overflowed horizontally. This block tightens spacing and lets
+   flex containers wrap so nothing gets cropped.
+*/
+@media (max-width: 480px) {
+    .app-container {
+        padding: 14px;
+        gap: 18px;
+    }
+    header {
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+    h1 {
+        font-size: 1.5rem;
+    }
+    .header-actions {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        row-gap: 6px;
+    }
+    .season-info {
+        white-space: nowrap;
+    }
+    /* Tasks list: reduce padding so the drag-handle + content + buttons
+       comfortably share a narrow row. */
+    .task-item {
+        padding: 12px 8px 12px 2px;
+    }
+    .task-info h3 {
+        font-size: 0.95rem;
+    }
+    /* Workout / training cards */
+    .exercise-card {
+        padding: 12px;
+    }
+    .exercise-target {
+        font-size: 0.78rem;
+    }
+    .set-row {
+        gap: 6px;
+    }
+    .set-input {
+        padding: 8px 4px;
+        font-size: 0.95rem;
+    }
+    .set-number {
+        width: 18px;
+        font-size: 0.85rem;
+    }
 }
