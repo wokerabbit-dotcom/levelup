@@ -162,9 +162,20 @@ export function getLogicalDate(date = new Date()) {
     return d;
 }
 
-function getTodayString() {
-    const d = getLogicalDate();
+// YYYY-MM-DD key from a Date object. Zero-padded so the lexicographic
+// order matches chronological order.
+function formatDateKey(d) {
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function getTodayString() {
+    return formatDateKey(getLogicalDate());
+}
+
+// A day counts as "active" if at least one task entry exists. Negative-only days
+// (score ≤ 0 from DontDo tasks) still count as activity for streak purposes.
+function isDayActive(key) {
+    return !!dailyHistory[key]?.tasksDone?.length;
 }
 
 function checkMonthlyReset() {
@@ -183,7 +194,7 @@ function calculate7DayAverage() {
         const d = new Date(today); d.setDate(d.getDate() - i);
         // Only count days within the current month (monthly reset)
         if (d.getMonth() !== currentMonth || d.getFullYear() !== currentYear) continue;
-        const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        const key = formatDateKey(d);
         if (dailyHistory[key]) { total += dailyHistory[key].score; count++; }
     }
     return count === 0 ? 0 : Math.round(total / count);
@@ -193,22 +204,18 @@ function getTodayScore() {
     return dailyHistory[getTodayString()]?.score || 0;
 }
 
+// Streak = consecutive past active days. "Today" only adds to the count if it
+// is itself active — an empty today doesn't break the streak (the user might
+// just not have logged anything yet).
 function calculateStreak() {
     const today = getLogicalDate(); today.setHours(0,0,0,0);
-    let streak = 0;
-    // Check today first
     const todayStr = getTodayString();
-    const todayData = dailyHistory[todayStr];
-    if (todayData && todayData.score > 0) streak = 1;
-    // Then go backwards from yesterday
-    for (let i = 1; i <= 365; i++) {
+    const startOffset = isDayActive(todayStr) ? 0 : 1;
+    let streak = 0;
+    for (let i = startOffset; i <= 365; i++) {
         const d = new Date(today); d.setDate(d.getDate() - i);
-        const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-        if (dailyHistory[key] && dailyHistory[key].score > 0) {
-            streak++;
-        } else {
-            break;
-        }
+        if (isDayActive(formatDateKey(d))) streak++;
+        else break;
     }
     return streak;
 }
@@ -242,11 +249,13 @@ function completeTask(taskId, quantity = 1) {
     if (!dailyHistory[todayStr]) dailyHistory[todayStr] = { score: 0, tasksDone: [] };
 
     const basePts = task.category === 'dontdo' ? -Math.abs(task.points) : task.points;
-    const totalPts = basePts * quantity;
-    dailyHistory[todayStr].score += totalPts;
+    const totalPts = parseFloat((basePts * quantity).toFixed(2));
+    // Round the running score on store too, otherwise floating-point drift
+    // accumulates (e.g. 0.1 + 0.2 → 0.30000000000000004 across many tasks).
+    dailyHistory[todayStr].score = parseFloat((dailyHistory[todayStr].score + totalPts).toFixed(2));
     dailyHistory[todayStr].tasksDone.push({
         id: task.id, name: task.name, timestamp: Date.now(),
-        points: parseFloat(totalPts.toFixed(2)),
+        points: totalPts,
         unit: quantity !== 1 ? `${quantity}× ${task.unit}` : task.unit
     });
     storage.set('dailyHistory', dailyHistory);
@@ -457,7 +466,9 @@ function openQuantityModal(task) {
 // ─── Calendar ─────────────────────────────────────────────────────────────────
 function renderCalendar() {
     calendarListEl.innerHTML = '';
-    const dates = Object.keys(dailyHistory).sort((a,b) => new Date(b)-new Date(a));
+    // Keys are zero-padded ISO strings (YYYY-MM-DD), so lexicographic order
+    // is chronological — no Date parsing needed.
+    const dates = Object.keys(dailyHistory).sort((a, b) => b.localeCompare(a));
     if (!dates.length) {
         calendarListEl.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:20px;">Noch keine Historie.</div>';
         return;
