@@ -63,6 +63,19 @@ function closeModal(modalEl, form) {
     lastFocusedBeforeModal = null;
 }
 
+// Wire the standard "cancel button + backdrop click resets form and closes
+// modal" pattern shared by every dialog. Returns the close handler so callers
+// can also invoke it after a submit.
+function wireModalDismiss(modalEl, { cancelBtn, form, onClose } = {}) {
+    const close = () => {
+        closeModal(modalEl, form);
+        if (onClose) onClose();
+    };
+    if (cancelBtn) cancelBtn.addEventListener('click', close);
+    modalEl.addEventListener('click', e => { if (e.target === modalEl) close(); });
+    return close;
+}
+
 // Stilkonformer Confirm-Dialog. Returns a Promise<boolean>.
 function customConfirm(message, { title = 'Bestätigen', okLabel = 'OK', okClass = 'btn-primary' } = {}) {
     const modalEl = document.getElementById('confirm-modal');
@@ -514,16 +527,6 @@ function renderTasks() {
     });
 }
 
-function reorderTask(draggedId, targetId) {
-    const fromIdx = tasks.findIndex(t => t.id === draggedId);
-    const toIdx = tasks.findIndex(t => t.id === targetId);
-    if (fromIdx === -1 || toIdx === -1) return;
-    const [moved] = tasks.splice(fromIdx, 1);
-    tasks.splice(toIdx, 0, moved);
-    storage.set('tasks', tasks);
-    renderTasks();
-}
-
 function openEditModal(id) {
     const task = tasks.find(t => t.id === id);
     if (!task) return;
@@ -534,7 +537,7 @@ function openEditModal(id) {
     document.getElementById('edit-task-category').value = task.category || 'routine';
     document.getElementById('edit-task-is-simple').checked = !!task.isSimple;
     document.getElementById('edit-group-is-simple').style.display = (task.category || 'routine') === 'routine' ? 'block' : 'none';
-    editModal.classList.remove('hidden');
+    openModal(editModal);
 }
 
 function openQuantityModal(task) {
@@ -546,7 +549,7 @@ function openQuantityModal(task) {
         : `Wie viele ${task.unit}? (+${task.points} pro ${task.unit})`;
     quantityLabel.textContent = `Anzahl (${task.unit})`;
     quantityInput.value = '1';
-    quantityModal.classList.remove('hidden');
+    openModal(quantityModal);
     quantityInput.focus();
     quantityInput.select();
 }
@@ -630,10 +633,9 @@ function setupEventListeners() {
         document.getElementById('task-category').value = 'routine';
         document.getElementById('group-is-simple').style.display = 'block';
         document.getElementById('task-is-simple').checked = false;
-        modal.classList.remove('hidden');
+        openModal(modal);
     });
-    btnCancelTask.addEventListener('click', () => { modal.classList.add('hidden'); formAddTask.reset(); });
-    modal.addEventListener('click', e => { if (e.target===modal) { modal.classList.add('hidden'); formAddTask.reset(); } });
+    const closeAdd = wireModalDismiss(modal, { cancelBtn: btnCancelTask, form: formAddTask });
     formAddTask.addEventListener('submit', e => {
         e.preventDefault();
         addTask(
@@ -643,15 +645,14 @@ function setupEventListeners() {
             document.getElementById('task-category').value,
             document.getElementById('task-is-simple').checked
         );
-        modal.classList.add('hidden'); formAddTask.reset();
+        closeAdd();
     });
 
     // Edit Task
     document.getElementById('edit-task-category').addEventListener('change', e => {
         document.getElementById('edit-group-is-simple').style.display = e.target.value === 'routine' ? 'block' : 'none';
     });
-    btnCancelEditTask.addEventListener('click', () => editModal.classList.add('hidden'));
-    editModal.addEventListener('click', e => { if (e.target===editModal) editModal.classList.add('hidden'); });
+    const closeEdit = wireModalDismiss(editModal, { cancelBtn: btnCancelEditTask });
     formEditTask.addEventListener('submit', e => {
         e.preventDefault();
         editTask(
@@ -662,17 +663,15 @@ function setupEventListeners() {
             document.getElementById('edit-task-category').value,
             document.getElementById('edit-task-is-simple').checked
         );
-        editModal.classList.add('hidden');
+        closeEdit();
     });
 
     // Calendar
-    btnCalendar.addEventListener('click', () => { renderCalendar(); calendarModal.classList.remove('hidden'); });
-    btnCloseCalendar.addEventListener('click', () => calendarModal.classList.add('hidden'));
-    calendarModal.addEventListener('click', e => { if (e.target===calendarModal) calendarModal.classList.add('hidden'); });
+    btnCalendar.addEventListener('click', () => { renderCalendar(); openModal(calendarModal); });
+    wireModalDismiss(calendarModal, { cancelBtn: btnCloseCalendar });
 
     // Quantity Modal
-    btnCancelQuantity.addEventListener('click', () => { quantityModal.classList.add('hidden'); pendingTaskId = null; });
-    quantityModal.addEventListener('click', e => { if (e.target===quantityModal) { quantityModal.classList.add('hidden'); pendingTaskId = null; } });
+    const closeQty = wireModalDismiss(quantityModal, { cancelBtn: btnCancelQuantity, onClose: () => { pendingTaskId = null; } });
     quantityForm.addEventListener('submit', e => {
         e.preventDefault();
         if (!pendingTaskId) return;
@@ -684,8 +683,7 @@ function setupEventListeners() {
             return;
         }
         completeTask(pendingTaskId, qty);
-        quantityModal.classList.add('hidden');
-        pendingTaskId = null;
+        closeQty();
     });
 
     // Training
@@ -714,9 +712,9 @@ function setupEventListeners() {
     btnCreateCustom.addEventListener('click', () => {
         customExercisesList.innerHTML = '';
         Training.addCustomExerciseRow(customExercisesList);
-        customTrainingModal.classList.remove('hidden');
+        openModal(customTrainingModal);
     });
-    btnCancelCustom.addEventListener('click', () => { customTrainingModal.classList.add('hidden'); formCustomTraining.reset(); });
+    const closeCustom = wireModalDismiss(customTrainingModal, { cancelBtn: btnCancelCustom, form: formCustomTraining });
     btnAddCustomExercise.addEventListener('click', () => Training.addCustomExerciseRow(customExercisesList));
     formCustomTraining.addEventListener('submit', async e => {
         e.preventDefault();
@@ -726,12 +724,12 @@ function setupEventListeners() {
             customExercisesList,
             customPlans
         );
-        if (!plan) { alert('Bitte füge mindestens eine Übung hinzu.'); return; }
+        if (!plan) { showToast('Bitte füge mindestens eine Übung hinzu.'); return; }
         Training.renderCustomPlansMenu(customPlans, customPlansContainer, async id => {
             currentWorkoutDayId = id;
             await Training.openWorkout(id, customPlans, trainingHistory, workoutEls());
         });
-        customTrainingModal.classList.add('hidden'); formCustomTraining.reset();
+        closeCustom();
     });
 }
 

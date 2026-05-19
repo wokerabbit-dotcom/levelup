@@ -47,12 +47,36 @@ header {
     padding: 10px 0;
 }
 
+.header-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
 h1 {
     font-size: 1.8rem;
     font-weight: 700;
     background: linear-gradient(to right, #60a5fa, #a78bfa);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
+}
+
+#logo-home {
+    cursor: pointer;
+}
+
+/* Compact pill button used in the header (Training / Calendar). */
+.btn-pill {
+    padding: 4px 10px;
+    font-size: 0.8rem;
+    border-radius: 20px;
+}
+.btn-pill--training {
+    background: #8b5cf6;
+}
+
+.tasks-section {
+    margin-top: 24px;
 }
 
 .season-info {

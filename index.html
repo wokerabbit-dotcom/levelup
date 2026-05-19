@@ -12,10 +12,10 @@
     <div class="app-container">
         <!-- Header -->
         <header>
-            <h1 id="logo-home" style="cursor:pointer;" title="Zurück zum Dashboard">Level Up</h1>
-            <div style="display:flex; gap:10px; align-items:center;">
-                <button id="btn-training-menu" class="btn-primary" style="padding: 4px 10px; font-size: 0.8rem; border-radius: 20px; background: #8b5cf6;">🏋️ Training</button>
-                <button id="btn-calendar" class="btn-secondary" style="padding: 4px 10px; font-size: 0.8rem; border-radius: 20px;">📅 Kalender</button>
+            <h1 id="logo-home" title="Zurück zum Dashboard">Level Up</h1>
+            <div class="header-actions">
+                <button id="btn-training-menu" class="btn-primary btn-pill btn-pill--training">🏋️ Training</button>
+                <button id="btn-calendar" class="btn-secondary btn-pill">📅 Kalender</button>
                 <div class="season-info">Saison <span id="current-month">...</span></div>
             </div>
         </header>
@@ -43,7 +43,7 @@
             </section>
 
             <!-- Tasks Area -->
-            <main class="tasks-section" style="margin-top: 24px;">
+            <main class="tasks-section">
                 <div class="section-header">
                     <h2>Meine Aufgaben</h2>
                     <button id="btn-add-task" class="btn-primary">+ Neu</button>
