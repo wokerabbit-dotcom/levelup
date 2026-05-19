@@ -236,13 +236,30 @@ button {
 
 .task-item {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 16px;
+    gap: 8px;
+    padding: 14px 12px 14px 4px;
     background: var(--glass-bg);
     border: 1px solid var(--glass-border);
     border-radius: 12px;
     transition: transform 0.2s, background 0.2s;
+}
+
+.task-item .task-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.task-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.task-done-check {
+    color: var(--success-color);
+    font-size: 1.2rem;
 }
 
 .task-item:hover {
@@ -570,13 +587,33 @@ button {
     color: var(--primary-color);
 }
 
-/* SortableJS */
-.task-item {
+/* SortableJS — dedicated drag handle so tap/scroll/drag don't compete. */
+.drag-handle {
+    /* generous hit area for touch, narrow visual footprint */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    min-height: 40px;
+    padding: 0 4px;
+    color: var(--text-muted);
+    font-size: 1.1rem;
+    line-height: 1;
     cursor: grab;
+    /* Block the browser's default touch behavior on the handle so SortableJS
+       (forceFallback) reliably captures pointer events on mobile instead of
+       losing them to vertical scroll. */
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    /* iOS Safari: suppress the long-press callout / text selection bubble. */
+    -webkit-touch-callout: none;
 }
-.task-item:active {
+.drag-handle:active {
     cursor: grabbing;
+    color: var(--text-main);
 }
+
 .sortable-ghost {
     opacity: 0.4;
     background: rgba(255, 255, 255, 0.1) !important;
@@ -585,6 +622,12 @@ button {
     opacity: 1 !important;
     box-shadow: 0 8px 24px rgba(0,0,0,0.5) !important;
     transform: scale(1.02);
+}
+/* While a drag is in progress Sortable adds .sortable-fallback to the clone;
+   make sure it sits above everything else. */
+.sortable-fallback {
+    opacity: 0.95 !important;
+    z-index: 3000 !important;
 }
 
 /* Streak */

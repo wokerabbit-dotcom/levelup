@@ -447,26 +447,33 @@ function renderTasks() {
             const idSafe = escapeHtml(task.id);
             const actionLabel = isDontDo ? `${task.name} als gemacht eintragen (Minuspunkte)` : `${task.name} ausführen`;
             li.innerHTML = `
+                <span class="drag-handle" aria-hidden="true" title="Zum Verschieben halten">⋮⋮</span>
                 <div class="task-info">
                     <h3>${nameSafe}</h3>
                     <span class="task-points ${colorCls}">${sign}${task.points} pro ${unitSafe}</span>
                 </div>
-                <div style="display:flex;gap:6px;align-items:center;">
+                <div class="task-actions">
                     <button class="btn-edit-task" data-edit-id="${idSafe}" title="Bearbeiten" aria-label="${escapeHtml(task.name)} bearbeiten">✏️</button>
-                    ${!isDone ? `<button class="task-action" data-id="${idSafe}" title="Ausführen" aria-label="${escapeHtml(actionLabel)}">${icon}</button>` : '<span style="color:var(--success-color);font-size:1.2rem;" aria-label="erledigt">✔</span>'}
-                    <button class="task-action delete-btn" data-delete-id="${idSafe}" title="Löschen" aria-label="${escapeHtml(task.name)} löschen" style="background:transparent;color:var(--text-muted);font-size:0.9rem;">🗑</button>
+                    ${!isDone ? `<button class="task-action" data-id="${idSafe}" title="Ausführen" aria-label="${escapeHtml(actionLabel)}">${icon}</button>` : '<span class="task-done-check" aria-label="erledigt">✔</span>'}
+                    <button class="task-action delete-btn" data-delete-id="${idSafe}" title="Löschen" aria-label="${escapeHtml(task.name)} löschen">🗑</button>
                 </div>`;
             
             listContainer.appendChild(li);
         });
 
-        // Initialize Sortable (instance tracked so it can be destroyed on re-render)
+        // Initialize Sortable (instance tracked so it can be destroyed on re-render).
+        // Dedicated handle means the rest of the row remains tappable/scrollable,
+        // so no long-press delay is needed and mobile drag works reliably.
+        // forceFallback uses Sortable's own pointer-based drag implementation,
+        // which behaves consistently across iOS/Android instead of relying on
+        // the patchy HTML5 drag-and-drop API.
         if (window.Sortable) {
             sortableInstances.push(new Sortable(listContainer, {
                 group: cat.key,
                 animation: 150,
-                delay: 800, // 800ms delay so scrolling works
-                delayOnTouchOnly: true, // Only apply delay on touch devices
+                handle: '.drag-handle',
+                forceFallback: true,
+                fallbackTolerance: 5, // ignore tiny finger jitter before drag starts
                 onEnd: function (evt) {
                     const itemEl = evt.item;
                     const id = itemEl.getAttribute('data-task-id');
