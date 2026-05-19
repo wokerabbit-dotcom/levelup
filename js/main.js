@@ -43,6 +43,70 @@ function escapeHtml(s) {
         .replace(/'/g, '&#39;');
 }
 
+// Modal open/close helpers with focus management. Tracks the previously
+// focused element so it can be restored on close.
+let lastFocusedBeforeModal = null;
+function openModal(modalEl) {
+    lastFocusedBeforeModal = document.activeElement;
+    modalEl.classList.remove('hidden');
+    modalEl.setAttribute('aria-hidden', 'false');
+    const focusable = modalEl.querySelector('input:not([type=hidden]), select, textarea, button');
+    if (focusable) focusable.focus();
+}
+function closeModal(modalEl, form) {
+    modalEl.classList.add('hidden');
+    modalEl.setAttribute('aria-hidden', 'true');
+    if (form) form.reset();
+    if (lastFocusedBeforeModal && typeof lastFocusedBeforeModal.focus === 'function') {
+        lastFocusedBeforeModal.focus();
+    }
+    lastFocusedBeforeModal = null;
+}
+
+// Stilkonformer Confirm-Dialog. Returns a Promise<boolean>.
+function customConfirm(message, { title = 'Bestätigen', okLabel = 'OK', okClass = 'btn-primary' } = {}) {
+    const modalEl = document.getElementById('confirm-modal');
+    const msgEl = document.getElementById('confirm-message');
+    const titleEl = document.getElementById('confirm-title');
+    const okBtn = document.getElementById('btn-confirm-ok');
+    const cancelBtn = document.getElementById('btn-confirm-cancel');
+    titleEl.textContent = title;
+    msgEl.textContent = message;
+    okBtn.className = okClass;
+    okBtn.textContent = okLabel;
+    return new Promise(resolve => {
+        const cleanup = (result) => {
+            okBtn.removeEventListener('click', onOk);
+            cancelBtn.removeEventListener('click', onCancel);
+            modalEl.removeEventListener('click', onBackdrop);
+            closeModal(modalEl);
+            resolve(result);
+        };
+        const onOk = () => cleanup(true);
+        const onCancel = () => cleanup(false);
+        const onBackdrop = (e) => { if (e.target === modalEl) cleanup(false); };
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+        modalEl.addEventListener('click', onBackdrop);
+        openModal(modalEl);
+        okBtn.focus();
+    });
+}
+
+// Plays a brief success animation + (where supported) vibrates the device.
+// Tracks the last celebrated day so repeated updates on the same day don't
+// re-trigger the animation.
+let lastCelebratedDay = null;
+function celebrateTargetReached() {
+    if (navigator.vibrate) {
+        try { navigator.vibrate([60, 40, 120]); } catch (_) { /* no-op */ }
+    }
+    scoreTodayEl.classList.remove('celebrate');
+    // Force reflow so re-adding the class restarts the animation.
+    void scoreTodayEl.offsetWidth;
+    scoreTodayEl.classList.add('celebrate');
+}
+
 // Lightweight toast for surfacing errors (e.g. localStorage quota exceeded).
 function showToast(msg, type = 'error') {
     let host = document.getElementById('toast-host');
@@ -137,6 +201,13 @@ async function init() {
     await Training.getExerciseLibrary();
 
     checkMonthlyReset();
+    // Suppress the target-reached animation on initial load if the user is
+    // already above the target — they reached it earlier, not just now.
+    const initialScore = getTodayScore();
+    const initialTarget = calculate7DayAverage();
+    if (initialTarget > 0 && initialScore >= initialTarget) {
+        lastCelebratedDay = getTodayString();
+    }
     updateDashboard();
     renderTasks();
     Training.renderCustomPlansMenu(customPlans, customPlansContainer, async (id) => {
@@ -144,6 +215,7 @@ async function init() {
         await Training.openWorkout(id, customPlans, trainingHistory, workoutEls());
     });
     setupEventListeners();
+    setupEscapeKeyHandler();
 
     const months = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
     // Use logical date so the "Saison" label matches what calculate7DayAverage uses
@@ -292,6 +364,12 @@ function updateDashboard() {
     if (score >= target && target > 0) {
         dashboardMsgEl.textContent = "🔥 Tagesziel erreicht! Stark!";
         dashboardMsgEl.style.color = "var(--success-color)";
+        // Celebrate the first crossing of the target each logical day.
+        const todayStr = getTodayString();
+        if (lastCelebratedDay !== todayStr) {
+            lastCelebratedDay = todayStr;
+            celebrateTargetReached();
+        }
     } else if (score >= target) {
         dashboardMsgEl.textContent = "Sammle Punkte, um einen Durchschnitt aufzubauen.";
         dashboardMsgEl.style.color = "var(--text-muted)";
@@ -354,15 +432,16 @@ function renderTasks() {
             const nameSafe = escapeHtml(task.name);
             const unitSafe = escapeHtml(task.unit);
             const idSafe = escapeHtml(task.id);
+            const actionLabel = isDontDo ? `${task.name} als gemacht eintragen (Minuspunkte)` : `${task.name} ausführen`;
             li.innerHTML = `
                 <div class="task-info">
                     <h3>${nameSafe}</h3>
                     <span class="task-points ${colorCls}">${sign}${task.points} pro ${unitSafe}</span>
                 </div>
                 <div style="display:flex;gap:6px;align-items:center;">
-                    <button class="btn-edit-task" data-edit-id="${idSafe}" title="Bearbeiten">✏️</button>
-                    ${!isDone ? `<button class="task-action" data-id="${idSafe}" title="Ausführen">${icon}</button>` : '<span style="color:var(--success-color);font-size:1.2rem;">✔</span>'}
-                    <button class="task-action delete-btn" data-delete-id="${idSafe}" title="Löschen" style="background:transparent;color:var(--text-muted);font-size:0.9rem;">🗑</button>
+                    <button class="btn-edit-task" data-edit-id="${idSafe}" title="Bearbeiten" aria-label="${escapeHtml(task.name)} bearbeiten">✏️</button>
+                    ${!isDone ? `<button class="task-action" data-id="${idSafe}" title="Ausführen" aria-label="${escapeHtml(actionLabel)}">${icon}</button>` : '<span style="color:var(--success-color);font-size:1.2rem;" aria-label="erledigt">✔</span>'}
+                    <button class="task-action delete-btn" data-delete-id="${idSafe}" title="Löschen" aria-label="${escapeHtml(task.name)} löschen" style="background:transparent;color:var(--text-muted);font-size:0.9rem;">🗑</button>
                 </div>`;
             
             listContainer.appendChild(li);
@@ -420,8 +499,14 @@ function renderTasks() {
         });
     });
     taskListEl.querySelectorAll('.delete-btn').forEach(btn => {
-        btn.addEventListener('click', e => {
-            if (confirm('Aufgabe löschen?')) deleteTask(e.currentTarget.getAttribute('data-delete-id'));
+        btn.addEventListener('click', async e => {
+            const id = e.currentTarget.getAttribute('data-delete-id');
+            const task = tasks.find(t => t.id === id);
+            const ok = await customConfirm(
+                `"${task?.name ?? 'Aufgabe'}" wirklich löschen?`,
+                { okLabel: 'Löschen', okClass: 'btn-primary danger' }
+            );
+            if (ok) deleteTask(id);
         });
     });
     taskListEl.querySelectorAll('.btn-edit-task').forEach(btn => {
@@ -499,7 +584,39 @@ function goHome() {
     trainingSection.classList.add('hidden');
     calendarModal.classList.add('hidden');
     customTrainingModal.classList.add('hidden');
+    // Reset transient modal state so the quantity dialog doesn't reopen with
+    // a stale pending task next time.
+    quantityModal.classList.add('hidden');
+    modal.classList.add('hidden');
+    editModal.classList.add('hidden');
+    pendingTaskId = null;
+    formAddTask.reset();
+    formEditTask.reset();
     mainView.classList.remove('hidden');
+}
+
+// Close the top-most visible modal on Escape. Iterates in reverse z-stack
+// order (last-rendered confirm modal first) so nested confirms close before
+// their parent dialogs.
+function setupEscapeKeyHandler() {
+    const modalIds = ['confirm-modal', 'quantity-modal', 'edit-task-modal', 'add-task-modal', 'custom-training-modal', 'calendar-modal'];
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        for (const id of modalIds) {
+            const m = document.getElementById(id);
+            if (m && !m.classList.contains('hidden')) {
+                // Confirm modal manages its own cleanup via the cancel button.
+                if (id === 'confirm-modal') {
+                    document.getElementById('btn-confirm-cancel').click();
+                } else {
+                    closeModal(m);
+                    if (id === 'quantity-modal') pendingTaskId = null;
+                }
+                e.preventDefault();
+                return;
+            }
+        }
+    });
 }
 
 function setupEventListeners() {
