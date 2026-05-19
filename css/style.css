@@ -104,6 +104,11 @@ h1 {
     color: var(--primary-color);
 }
 
+/* Negative-today score (DontDo dragged net score below zero) */
+.score-value.negative {
+    color: var(--danger-color);
+}
+
 .progress-container {
     height: 8px;
     background: rgba(0, 0, 0, 0.3);

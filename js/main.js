@@ -275,8 +275,11 @@ function updateDashboard() {
     const score = getTodayScore(), target = calculate7DayAverage();
     scoreTodayEl.textContent  = parseFloat(score.toFixed(1));
     scoreTargetEl.textContent = target;
+    // Mark negative score in red so it doesn't silently sit at "0" visually.
+    scoreTodayEl.classList.toggle('negative', score < 0);
     const pct = target > 0 ? Math.min((Math.max(0,score)/target)*100,100) : (score>0?100:0);
     scoreProgressEl.style.width = `${pct}%`;
+    scoreProgressEl.setAttribute('aria-valuenow', Math.round(pct));
 
     // Streak
     const streak = calculateStreak();
@@ -556,7 +559,13 @@ function setupEventListeners() {
     quantityForm.addEventListener('submit', e => {
         e.preventDefault();
         if (!pendingTaskId) return;
-        const qty = parseFloat(quantityInput.value) || 1;
+        const qty = parseFloat(quantityInput.value);
+        if (!isFinite(qty) || qty <= 0) {
+            showToast('Bitte eine positive Zahl eingeben.');
+            quantityInput.focus();
+            quantityInput.select();
+            return;
+        }
         completeTask(pendingTaskId, qty);
         quantityModal.classList.add('hidden');
         pendingTaskId = null;

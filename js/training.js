@@ -166,7 +166,10 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
 
     const d = new Date();
     d.setHours(d.getHours() - 3);
-    workoutDateInput.value = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const todayKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    workoutDateInput.value = todayKey;
+    // Prevent future-dated workouts entirely.
+    workoutDateInput.max = todayKey;
     workoutWarmupInput.checked = false;
     workoutWarmupText.value = await storage.get('warmupText', "Stepper/Fahrrad/Ruderergometer + World's greatest Stretch, Open Book, Handwalks, Gelenke, Prayer Stretch, Shoulder Blades.");
     workoutExercisesEl.innerHTML = '';
@@ -398,7 +401,12 @@ function showNewExerciseModal(dayId, slotIndex, dropdown, exerciseLib, customPla
 export async function finishWorkout(dayId, customPlans, trainingHistory, dailyHistory, els) {
     const plan = await getResolvedPlan(dayId, customPlans);
     const { workoutDateInput, workoutWarmupInput, workoutWarmupText, workoutExercisesEl } = els;
-    const dateStr = workoutDateInput.value;
+    // Clamp the workout date to today (logical-date offset) so users can't
+    // backdate into the future via DevTools / form manipulation.
+    const now = new Date(); now.setHours(now.getHours() - 3);
+    const todayKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    let dateStr = workoutDateInput.value;
+    if (!dateStr || dateStr > todayKey) dateStr = todayKey;
     const factor = plan.factor || 50;
 
     const hist = trainingHistory[dayId];
