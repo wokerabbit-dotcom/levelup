@@ -57,10 +57,20 @@ export async function getExerciseLibrary() {
         // Seed from built-in plans
         Object.values(BUILT_IN_PLANS).forEach(plan => {
             plan.exercises.forEach(ex => {
-                lib[ex.id] = { id: ex.id, name: ex.name, sets: ex.sets, targetReps: ex.targetReps, description: '' };
+                lib[ex.id] = { id: ex.id, name: ex.name, sets: ex.sets, targetReps: ex.targetReps, description: '', isAssisted: false };
             });
         });
         await storage.set('exerciseLibrary', lib);
+    } else {
+        // Backfill isAssisted on legacy entries that predate the flag.
+        let mutated = false;
+        for (const id in lib) {
+            if (lib[id] && typeof lib[id].isAssisted !== 'boolean') {
+                lib[id].isAssisted = false;
+                mutated = true;
+            }
+        }
+        if (mutated) await storage.set('exerciseLibrary', lib);
     }
     return lib;
 }
@@ -72,8 +82,19 @@ export async function saveExerciseToLibrary(exercise) {
         name: exercise.name,
         sets: exercise.sets,
         targetReps: exercise.targetReps,
-        description: exercise.description || ''
+        description: exercise.description || '',
+        isAssisted: !!exercise.isAssisted,
     };
+    await storage.set('exerciseLibrary', lib);
+    return lib;
+}
+
+// Toggle the assistive flag on an existing exercise. Used by the in-card
+// checkbox so the change persists without reopening the workout.
+export async function setExerciseAssisted(exId, isAssisted) {
+    const lib = await getExerciseLibrary();
+    if (!lib[exId]) return lib;
+    lib[exId].isAssisted = !!isAssisted;
     await storage.set('exerciseLibrary', lib);
     return lib;
 }
@@ -251,7 +272,8 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
     plan.exercises.forEach((exItem, slotIndex) => {
         const activeExId = exItem.id;
         const libEntry = exerciseLib[activeExId];
-        const ex = libEntry ? { ...exItem, id: libEntry.id, name: libEntry.name, sets: exItem.sets || libEntry.sets, targetReps: exItem.targetReps || libEntry.targetReps, description: libEntry.description || '' } : exItem;
+        const ex = libEntry ? { ...exItem, id: libEntry.id, name: libEntry.name, sets: exItem.sets || libEntry.sets, targetReps: exItem.targetReps || libEntry.targetReps, description: libEntry.description || '', isAssisted: !!libEntry.isAssisted } : exItem;
+        const isAssisted = !!ex.isAssisted;
 
         const targetReps = parseInt(ex.targetReps) || 8;
         let isDeload = false, isIncrease = false;
@@ -271,6 +293,7 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
         const exLastValues = lastValues[ex.id];
         const lastComment = exLastValues?.comment || '';
 
+        const kgLabel = isAssisted ? 'Assist (kg)' : 'kg';
         const setsHtml = Array.from({ length: setsCount }).map((_, i) => {
             // Try global last values first, then plan history
             const globalLastSet = exLastValues?.sets?.[i];
@@ -278,11 +301,18 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
             const lastSet = globalLastSet || histLastSet;
             const lastKg = lastSet?.kg || '';
             const lastReps = lastSet?.reps || '';
-            const suggestKg = isIncrease && lastKg > 0 ? Math.round(lastKg * 1.05 * 2) / 2 : lastKg;
+            // Progression suggestion: more weight for normal, less assist for assistive.
+            let suggestKg = lastKg;
+            if (isIncrease && lastKg !== '' && Number.isFinite(parseFloat(lastKg))) {
+                const v = parseFloat(lastKg);
+                suggestKg = isAssisted
+                    ? Math.max(0, Math.round(v * 0.95 * 2) / 2)
+                    : Math.round(v * 1.05 * 2) / 2;
+            }
             return `<div class="set-row">
                 <span class="set-number">${i+1}.</span>
                 <input type="number" class="set-input set-reps" placeholder="Wdh (z.B. ${lastReps||targetReps})" value="">
-                <input type="number" step="0.5" class="set-input set-kg" placeholder="kg (z.B. ${lastKg||0})" value="${suggestKg}">
+                <input type="number" step="0.5" class="set-input set-kg" placeholder="${kgLabel} (z.B. ${lastKg||0})" value="${suggestKg}">
             </div>`;
         }).join('');
 
@@ -310,6 +340,7 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
                 </div>
             </div>
             ${hintsHtml}
+            ${isAssisted ? `<div class="assist-hint">⚖️ Gegengewicht-Übung — weniger Assist-kg bringt mehr Punkte.</div>` : ''}
             <div class="exercise-meta-section">
                 <details class="exercise-details">
                     <summary class="exercise-details-summary">📋 Beschreibung & Notizen</summary>
@@ -322,10 +353,16 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
                             <label>Kommentar / Notizen</label>
                             <textarea class="exercise-comment" placeholder="z.B. 'Grip etwas breiter', 'Schulter zwickt'..." rows="2">${lastComment}</textarea>
                         </div>
+                        <div class="exercise-meta-field">
+                            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; text-transform:none; letter-spacing:0;">
+                                <input type="checkbox" class="exercise-assist-toggle" ${isAssisted ? 'checked' : ''} style="width:18px; height:18px;">
+                                <span>Gegengewicht-Übung (z. B. Dips/Klimmzüge an der Assist-Maschine)</span>
+                            </label>
+                        </div>
                     </div>
                 </details>
             </div>
-            <div class="exercise-sets" data-ex-id="${ex.id}" data-target-sets="${ex.sets}" data-target-reps="${targetReps}">
+            <div class="exercise-sets" data-ex-id="${ex.id}" data-target-sets="${ex.sets}" data-target-reps="${targetReps}" data-is-assisted="${isAssisted ? 'true' : 'false'}">
                 ${setsHtml}
             </div>`;
         workoutExercisesEl.appendChild(div);
@@ -350,6 +387,16 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
                 await openWorkout(dayId, customPlans, trainingHistory, els);
             }
         });
+
+        // Persist the assistive flag on toggle and re-render so the kg
+        // placeholder / hint banner update immediately.
+        const assistToggle = div.querySelector('.exercise-assist-toggle');
+        if (assistToggle) {
+            assistToggle.addEventListener('change', async (e) => {
+                await setExerciseAssisted(ex.id, e.target.checked);
+                await openWorkout(dayId, customPlans, trainingHistory, els);
+            });
+        }
     });
 
     const addBtn = document.createElement('button');
@@ -579,6 +626,7 @@ export async function finishWorkout(dayId, customPlans, trainingHistory, dailyHi
         const targetSets = parseInt(setContainer.getAttribute('data-target-sets'));
         const targetReps = parseInt(setContainer.getAttribute('data-target-reps'));
         const wasDeloadUI = card.getAttribute('data-is-deload') === 'true';
+        const isAssisted = setContainer.getAttribute('data-is-assisted') === 'true';
 
         // Get comment and description
         const commentEl = card.querySelector('.exercise-comment');
@@ -597,10 +645,23 @@ export async function finishWorkout(dayId, customPlans, trainingHistory, dailyHi
             if (reps < targetReps) achievedAll = false;
             newWorkoutData.exercises[exId].push({ kg, reps });
             setsData.push({ kg, reps });
-            points += reps * (1 + (kg / factor));
-            curVolume += (kg > 0 ? kg : 1) * reps;
-            const lset = lastWorkout?.exercises?.[exId]?.[idx];
-            if (lset) lastVolume += (lset.kg > 0 ? lset.kg : 1) * lset.reps;
+            // Assistive exercises (dips/pull-ups on assist machine): the kg
+            // input is the *assist* load, so less of it means a harder set.
+            // Flip the kg term in both the points formula and the volume
+            // metric used for progression detection. The volume offset
+            // `factor - kg` keeps values comparable across kg ranges and
+            // strictly positive as long as assist ≤ factor.
+            const effPoints = isAssisted ? (-kg) : kg;
+            points += reps * (1 + (effPoints / factor));
+            if (isAssisted) {
+                curVolume += Math.max(0, factor - kg) * reps;
+                const lset = lastWorkout?.exercises?.[exId]?.[idx];
+                if (lset) lastVolume += Math.max(0, factor - (lset.kg || 0)) * lset.reps;
+            } else {
+                curVolume += (kg > 0 ? kg : 1) * reps;
+                const lset = lastWorkout?.exercises?.[exId]?.[idx];
+                if (lset) lastVolume += (lset.kg > 0 ? lset.kg : 1) * lset.reps;
+            }
         });
 
         if (setsDone < targetSets && !wasDeloadUI) achievedAll = false;

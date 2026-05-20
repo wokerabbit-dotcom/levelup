@@ -528,6 +528,17 @@ button {
     cursor: pointer;
 }
 
+/* Assistive-exercise hint banner — surfaces the inverted-kg rule so users
+   know less assist = more points. */
+.assist-hint {
+    background: rgba(139, 92, 246, 0.15);
+    border-left: 4px solid #8b5cf6;
+    padding: 10px;
+    margin-bottom: 15px;
+    border-radius: 4px;
+    font-size: 0.88rem;
+}
+
 /* Deload Styling */
 .deload-hint {
     background: rgba(239, 68, 68, 0.15);
