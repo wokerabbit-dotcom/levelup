@@ -39,6 +39,7 @@
                          aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
                 </div>
                 <div id="streak-display" class="streak-display"></div>
+                <div id="best-day-display" class="best-day-display" aria-live="polite"></div>
                 <p id="dashboard-message" class="dashboard-msg">Erreiche deinen Durchschnitt!</p>
             </section>
 
@@ -46,7 +47,10 @@
             <main class="tasks-section">
                 <div class="section-header">
                     <h2>Meine Aufgaben</h2>
-                    <button id="btn-add-task" class="btn-primary">+ Neu</button>
+                    <div class="task-header-actions">
+                        <button id="btn-edit-mode" class="btn-secondary" type="button" aria-pressed="false" title="Bearbeitungsmodus umschalten">✏️ Bearbeiten</button>
+                        <button id="btn-add-task" class="btn-primary">+ Neu</button>
+                    </div>
                 </div>
                 
                 <ul id="task-list" class="task-list">
@@ -197,13 +201,18 @@
 
     <!-- Calendar Modal -->
     <div id="calendar-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="calendar-title" aria-hidden="true">
-        <div class="modal-content glass-panel" style="max-height: 80vh; display: flex; flex-direction: column;">
+        <div class="modal-content glass-panel calendar-modal-content">
             <div class="section-header">
                 <h2 id="calendar-title">Verlauf & Kalender</h2>
-                <button id="btn-close-calendar" class="btn-secondary" style="padding: 4px 10px; border-radius: 8px;">✕</button>
+                <button id="btn-close-calendar" class="btn-secondary btn-close-x" aria-label="Schließen">✕</button>
             </div>
-            <div id="calendar-list" style="overflow-y: auto; flex-grow: 1; margin-top: 10px; display:flex; flex-direction:column; gap:15px; padding-right: 5px;">
+            <div id="calendar-list" class="calendar-list">
                 <!-- History items injected here -->
+            </div>
+            <div class="calendar-footer">
+                <button id="btn-export-data" type="button" class="btn-secondary">⬇️ Export</button>
+                <button id="btn-import-data" type="button" class="btn-secondary">⬆️ Import</button>
+                <input type="file" id="import-data-file" accept="application/json,.json" hidden>
             </div>
         </div>
     </div>

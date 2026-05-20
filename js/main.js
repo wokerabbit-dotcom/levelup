@@ -31,6 +31,7 @@ let trainingHistory = {};
 let customPlans = [];
 let currentWorkoutDayId = null;
 let pendingTaskId = null; // for quantity modal
+let editMode = false;     // task-list edit toggle
 const sortableInstances = []; // tracked so we can destroy on re-render
 
 // Escape user-controlled strings before injecting into innerHTML.
@@ -120,8 +121,10 @@ function celebrateTargetReached() {
     scoreTodayEl.classList.add('celebrate');
 }
 
-// Lightweight toast for surfacing errors (e.g. localStorage quota exceeded).
-function showToast(msg, type = 'error') {
+// Lightweight toast for surfacing messages and offering a single undo-style
+// action. `action` (optional) → { label, onClick }. The toast removes itself
+// after `duration` ms (default 6 s) or when the action button is clicked.
+function showToast(msg, type = 'error', action = null, duration = 6000) {
     let host = document.getElementById('toast-host');
     if (!host) {
         host = document.createElement('div');
@@ -130,11 +133,22 @@ function showToast(msg, type = 'error') {
         document.body.appendChild(host);
     }
     const el = document.createElement('div');
-    el.textContent = msg;
-    const bg = type === 'error' ? '#b91c1c' : '#0f766e';
-    el.style.cssText = `pointer-events:auto;background:${bg};color:#fff;padding:10px 16px;border-radius:8px;font-size:0.9rem;box-shadow:0 4px 12px rgba(0,0,0,0.3);max-width:90vw;`;
+    const bg = type === 'error' ? '#b91c1c' : (type === 'success' ? '#0f766e' : '#1e3a8a');
+    el.style.cssText = `pointer-events:auto;background:${bg};color:#fff;padding:10px 16px;border-radius:8px;font-size:0.9rem;box-shadow:0 4px 12px rgba(0,0,0,0.3);max-width:92vw;display:flex;align-items:center;justify-content:space-between;gap:8px;`;
+    const textEl = document.createElement('span');
+    textEl.textContent = msg;
+    el.appendChild(textEl);
+    if (action) {
+        const btn = document.createElement('button');
+        btn.className = 'toast-action';
+        btn.textContent = action.label;
+        btn.addEventListener('click', () => {
+            try { action.onClick(); } finally { el.remove(); }
+        });
+        el.appendChild(btn);
+    }
     host.appendChild(el);
-    setTimeout(() => el.remove(), 6000);
+    setTimeout(() => el.remove(), duration);
 }
 
 // ─── DOM References ───────────────────────────────────────────────────────────
@@ -146,6 +160,11 @@ const taskListEl     = document.getElementById('task-list');
 const currentMonthEl = document.getElementById('current-month');
 const logoHome       = document.getElementById('logo-home');
 const streakDisplayEl = document.getElementById('streak-display');
+const bestDayDisplayEl = document.getElementById('best-day-display');
+const btnEditMode    = document.getElementById('btn-edit-mode');
+const btnExportData  = document.getElementById('btn-export-data');
+const btnImportData  = document.getElementById('btn-import-data');
+const importDataFile = document.getElementById('import-data-file');
 
 const modal         = document.getElementById('add-task-modal');
 const btnAddTask    = document.getElementById('btn-add-task');
@@ -204,6 +223,14 @@ async function init() {
     trainingHistory= await storage.get('trainingHistory', {});
     customPlans    = await storage.get('customPlans', []);
 
+    // Normalize legacy task records that predate the category field —
+    // anything without a category is treated as a routine task.
+    let mutated = false;
+    tasks.forEach(t => {
+        if (!t.category) { t.category = 'routine'; mutated = true; }
+    });
+    if (mutated) await storage.set('tasks', tasks);
+
     // Seed default tasks on first run
     if (tasks.length === 0) {
         tasks = DEFAULT_TASKS.map((t, i) => ({ ...t, id: 'default_' + i }));
@@ -223,21 +250,46 @@ async function init() {
     }
     updateDashboard();
     renderTasks();
-    Training.renderCustomPlansMenu(customPlans, customPlansContainer, async (id) => {
-        currentWorkoutDayId = id;
-        await Training.openWorkout(id, customPlans, trainingHistory, workoutEls());
-    });
+    renderCustomPlansMenuWithDelete();
     setupEventListeners();
     setupEscapeKeyHandler();
 
     const months = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
     // Use logical date so the "Saison" label matches what calculate7DayAverage uses
-    // (3h offset → day rolls over at 03:00 local time).
-    currentMonthEl.textContent = months[getLogicalDate().getMonth()];
+    // (3h offset → day rolls over at 03:00 local time). Year disambiguates
+    // multi-year history across January/December rollovers.
+    const ld = getLogicalDate();
+    currentMonthEl.textContent = `${months[ld.getMonth()]} ${ld.getFullYear()}`;
 }
 
 function workoutEls() {
     return { trainingMenu, workoutView, workoutTitle, workoutDateInput, workoutWarmupInput, workoutWarmupText: document.getElementById('workout-warmup-text'), workoutExercisesEl };
+}
+
+// Re-renders the custom-plans list with both the "open workout" handler and a
+// delete handler (stilkonform confirm). Used at init, after saving, and after
+// a delete so the list always reflects current state.
+function renderCustomPlansMenuWithDelete() {
+    Training.renderCustomPlansMenu(
+        customPlans,
+        customPlansContainer,
+        async id => {
+            currentWorkoutDayId = id;
+            await Training.openWorkout(id, customPlans, trainingHistory, workoutEls());
+        },
+        async id => {
+            const plan = customPlans.find(p => p.id === id);
+            if (!plan) return;
+            const ok = await customConfirm(
+                `Trainingsplan "${plan.name}" wirklich löschen? Vergangene Workouts bleiben erhalten.`,
+                { okLabel: 'Löschen', okClass: 'btn-primary danger' }
+            );
+            if (!ok) return;
+            customPlans = customPlans.filter(p => p.id !== id);
+            await storage.set('customPlans', customPlans);
+            renderCustomPlansMenuWithDelete();
+        }
+    );
 }
 
 // ─── Core Logic ───────────────────────────────────────────────────────────────
@@ -289,6 +341,26 @@ function getTodayScore() {
     return dailyHistory[getTodayString()]?.score || 0;
 }
 
+// Best day within the last 7 logical days (including today). Returned object
+// is { score, dateStr, isToday } or null if no day in window has a score.
+// Used for the "Rekord schlagen" indicator — the actual target stays the
+// 7-day average, this is just the motivational hi-score.
+function getBestOfLast7Days() {
+    const today = getLogicalDate(); today.setHours(0,0,0,0);
+    const todayStr = formatDateKey(today);
+    let best = null;
+    for (let i = 0; i <= 6; i++) {
+        const d = new Date(today); d.setDate(d.getDate() - i);
+        const key = formatDateKey(d);
+        const day = dailyHistory[key];
+        if (!day || typeof day.score !== 'number') continue;
+        if (!best || day.score > best.score) {
+            best = { score: day.score, dateStr: key, isToday: key === todayStr };
+        }
+    }
+    return best;
+}
+
 // Streak = consecutive past active days. "Today" only adds to the count if it
 // is itself active — an empty today doesn't break the streak (the user might
 // just not have logged anything yet).
@@ -338,19 +410,52 @@ function completeTask(taskId, quantity = 1) {
     // Round the running score on store too, otherwise floating-point drift
     // accumulates (e.g. 0.1 + 0.2 → 0.30000000000000004 across many tasks).
     dailyHistory[todayStr].score = parseFloat((dailyHistory[todayStr].score + totalPts).toFixed(2));
-    dailyHistory[todayStr].tasksDone.push({
+    const entry = {
         id: task.id, name: task.name, timestamp: Date.now(),
         points: totalPts,
         unit: quantity !== 1 ? `${quantity}× ${task.unit}` : task.unit
-    });
+    };
+    dailyHistory[todayStr].tasksDone.push(entry);
     storage.set('dailyHistory', dailyHistory);
 
     // Archive ToDo tasks after completion
-    if (task.category === 'todo') {
+    const wasTodo = task.category === 'todo';
+    if (wasTodo) {
         task.done = true;
         storage.set('tasks', tasks);
     }
 
+    updateDashboard();
+    renderTasks();
+
+    // Undo toast — by timestamp so we don't confuse entries that share an id
+    // (multiple completions of the same routine in one day).
+    const undoStamp = entry.timestamp;
+    showToast(
+        `+${totalPts} Pkt: ${task.name}`,
+        'info',
+        { label: 'Rückgängig', onClick: () => undoCompletion(todayStr, undoStamp, taskId, wasTodo) },
+        6000
+    );
+}
+
+// Reverse a single completion: remove the entry by timestamp, subtract its
+// points from the day's score, and un-archive a ToDo if applicable.
+function undoCompletion(dateKey, timestamp, taskId, wasTodo) {
+    const day = dailyHistory[dateKey];
+    if (!day || !Array.isArray(day.tasksDone)) return;
+    const idx = day.tasksDone.findIndex(e => e.timestamp === timestamp);
+    if (idx === -1) return;
+    const [removed] = day.tasksDone.splice(idx, 1);
+    day.score = parseFloat((day.score - removed.points).toFixed(2));
+    // Clean up empty day records so the calendar/best-of-7 don't show zero rows.
+    if (day.tasksDone.length === 0 && day.score === 0) delete dailyHistory[dateKey];
+    storage.set('dailyHistory', dailyHistory);
+
+    if (wasTodo) {
+        const task = tasks.find(t => t.id === taskId);
+        if (task) { task.done = false; storage.set('tasks', tasks); }
+    }
     updateDashboard();
     renderTasks();
 }
@@ -372,6 +477,24 @@ function updateDashboard() {
         streakDisplayEl.innerHTML = `<span class="streak-fire">🔥 ${streak} Tage in Folge aktiv!</span>`;
     } else {
         streakDisplayEl.innerHTML = '';
+    }
+
+    // Best-of-7 indicator. The 7-day-Ø stays the daily target — this
+    // surfaces the explicit "high score" the user is chasing.
+    const best = getBestOfLast7Days();
+    if (best && best.score > 0) {
+        const d = new Date(best.dateStr);
+        const niceDate = d.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
+        const bestVal = parseFloat(best.score.toFixed(1));
+        if (best.isToday) {
+            bestDayDisplayEl.innerHTML = `🏆 <span class="best-day-today">Neuer Rekord (7 d): ${bestVal} Pkt</span>`;
+        } else {
+            const diff = bestVal - parseFloat(score.toFixed(1));
+            const chase = diff > 0 ? ` · noch ${diff.toFixed(1)} bis zum Rekord` : '';
+            bestDayDisplayEl.innerHTML = `🏆 Bester Tag (7 d): <span class="best-day-value">${bestVal} Pkt</span> am ${escapeHtml(niceDate)}${chase}`;
+        }
+    } else {
+        bestDayDisplayEl.innerHTML = '';
     }
 
     if (score >= target && target > 0) {
@@ -505,9 +628,12 @@ function renderTasks() {
         taskListEl.innerHTML = '<li style="text-align:center;color:var(--text-muted);padding:20px;">Keine Aufgaben. Erstelle eine neue!</li>';
     }
 
-    // Action listeners: open quantity modal instead of directly completing
+    // Action listeners: open quantity modal instead of directly completing.
+    // In edit-mode, the execute button is CSS-hidden; the listener is a no-op
+    // defensive check in case a future style change unhides it.
     taskListEl.querySelectorAll('.task-action:not(.delete-btn)').forEach(btn => {
         btn.addEventListener('click', e => {
+            if (editMode) return;
             const taskId = e.currentTarget.getAttribute('data-id');
             const task = tasks.find(t => t.id === taskId);
             if (!task) return;
@@ -579,14 +705,132 @@ function renderCalendar() {
             ? '<ul class="history-task-list">' + day.tasksDone.map(t => {
                 const s = t.points > 0 ? '+' : '';
                 const c = t.points > 0 ? 'var(--success-color)' : 'var(--danger-color)';
-                return `<li class="history-task-item"><span>${escapeHtml(t.name)}</span><span style="color:${c}">${s}${t.points} Pkt</span></li>`;
+                // data-ts is the entry's timestamp — unique per completion.
+                return `<li class="history-task-item">
+                    <span>${escapeHtml(t.name)}</span>
+                    <span style="display:flex;align-items:center;">
+                        <span style="color:${c}">${s}${t.points} Pkt</span>
+                        <button class="btn-delete-history-entry" data-date="${escapeHtml(dateStr)}" data-ts="${t.timestamp}" title="Eintrag löschen" aria-label="Eintrag ${escapeHtml(t.name)} löschen">🗑</button>
+                    </span>
+                </li>`;
             }).join('') + '</ul>'
             : '<p class="history-task-list">Keine Einträge.</p>';
         const div = document.createElement('div');
         div.className = 'history-day';
-        div.innerHTML = `<div class="history-date"><span>${nice}</span><span>Gesamt: ${parseFloat(day.score.toFixed(1))} Pkt</span></div>${tasksHtml}`;
+        div.innerHTML = `<div class="history-date"><span>${escapeHtml(nice)}</span><span>Gesamt: ${parseFloat(day.score.toFixed(1))} Pkt</span></div>${tasksHtml}`;
         calendarListEl.appendChild(div);
     });
+
+    // Wire delete-entry buttons.
+    calendarListEl.querySelectorAll('.btn-delete-history-entry').forEach(btn => {
+        btn.addEventListener('click', async e => {
+            const dateKey = e.currentTarget.getAttribute('data-date');
+            const ts = parseInt(e.currentTarget.getAttribute('data-ts'), 10);
+            const day = dailyHistory[dateKey];
+            const entry = day?.tasksDone?.find(t => t.timestamp === ts);
+            if (!entry) return;
+            const ok = await customConfirm(
+                `Eintrag "${entry.name}" (${entry.points} Pkt) wirklich löschen?`,
+                { okLabel: 'Löschen', okClass: 'btn-primary danger' }
+            );
+            if (!ok) return;
+            // Reuse the undo path so score, day-cleanup and ToDo-archival
+            // behave consistently regardless of where the deletion came from.
+            const task = tasks.find(t => t.id === entry.id);
+            const wasTodo = !!task && task.category === 'todo';
+            undoCompletion(dateKey, ts, entry.id, wasTodo);
+            renderCalendar();
+        });
+    });
+}
+
+// ─── Data Export / Import ────────────────────────────────────────────────────
+// Bundles every `taskPWA_*` key in localStorage into a single JSON file the
+// user can keep as a backup. Keys are stored without the prefix in the export
+// so an import can be applied via storage.js without leaking the prefix
+// convention into the user-facing file.
+const STORAGE_PREFIX = 'taskPWA_';
+
+function collectExportPayload() {
+    const data = {};
+    for (let i = 0; i < localStorage.length; i++) {
+        const fullKey = localStorage.key(i);
+        if (!fullKey || !fullKey.startsWith(STORAGE_PREFIX)) continue;
+        const shortKey = fullKey.slice(STORAGE_PREFIX.length);
+        const raw = localStorage.getItem(fullKey);
+        try { data[shortKey] = JSON.parse(raw); }
+        catch (_) { data[shortKey] = raw; }
+    }
+    return {
+        app: 'LevelUp',
+        exportedAt: new Date().toISOString(),
+        version: 1,
+        data,
+    };
+}
+
+function exportDataAsFile() {
+    const payload = collectExportPayload();
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ts = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `levelup-backup-${ts}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast('Backup heruntergeladen.', 'success', null, 4000);
+}
+
+async function importDataFromFile(file) {
+    let parsed;
+    try {
+        const text = await file.text();
+        parsed = JSON.parse(text);
+    } catch (e) {
+        showToast('Datei ist kein gültiges JSON.');
+        return;
+    }
+    // Accept either {app, data:{...}} (current export shape) or a raw
+    // {tasks, dailyHistory, ...} object as a fallback for hand-edited backups.
+    const data = parsed && typeof parsed === 'object'
+        ? (parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed)
+        : null;
+    if (!data || typeof data !== 'object') {
+        showToast('Datei enthält keine Daten.');
+        return;
+    }
+    const keys = Object.keys(data).filter(k => typeof k === 'string' && k.length > 0);
+    if (!keys.length) {
+        showToast('Keine bekannten Schlüssel in der Datei.');
+        return;
+    }
+    const ok = await customConfirm(
+        `Backup importieren? Alle aktuellen Daten (${keys.length} Schlüssel) werden ersetzt.`,
+        { okLabel: 'Importieren', okClass: 'btn-primary danger' }
+    );
+    if (!ok) return;
+    // Remove existing prefixed keys first so stale keys not in the backup
+    // don't survive the import.
+    const toRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(STORAGE_PREFIX)) toRemove.push(k);
+    }
+    toRemove.forEach(k => localStorage.removeItem(k));
+    for (const k of keys) {
+        try {
+            localStorage.setItem(STORAGE_PREFIX + k, JSON.stringify(data[k]));
+        } catch (e) {
+            showToast('Import fehlgeschlagen – Speicher voll?');
+            return;
+        }
+    }
+    showToast('Import erfolgreich. App wird neu geladen…', 'success', null, 2500);
+    setTimeout(() => location.reload(), 1200);
 }
 
 // ─── Event Listeners ──────────────────────────────────────────────────────────
@@ -603,6 +847,7 @@ function goHome() {
     formAddTask.reset();
     formEditTask.reset();
     mainView.classList.remove('hidden');
+    if (editMode) setEditMode(false);
 }
 
 // Close the top-most visible modal on Escape. Iterates in reverse z-stack
@@ -629,8 +874,16 @@ function setupEscapeKeyHandler() {
     });
 }
 
+function setEditMode(on) {
+    editMode = !!on;
+    mainView.classList.toggle('edit-mode', editMode);
+    btnEditMode.setAttribute('aria-pressed', editMode ? 'true' : 'false');
+    btnEditMode.textContent = editMode ? '✓ Fertig' : '✏️ Bearbeiten';
+}
+
 function setupEventListeners() {
-    logoHome.addEventListener('click', goHome);
+    logoHome.addEventListener('click', () => { setEditMode(false); goHome(); });
+    btnEditMode.addEventListener('click', () => setEditMode(!editMode));
 
     // Add Task
     document.getElementById('task-category').addEventListener('change', e => {
@@ -677,6 +930,17 @@ function setupEventListeners() {
     btnCalendar.addEventListener('click', () => { renderCalendar(); openModal(calendarModal); });
     wireModalDismiss(calendarModal, { cancelBtn: btnCloseCalendar });
 
+    // Export / Import (data-loss prevention)
+    btnExportData.addEventListener('click', exportDataAsFile);
+    btnImportData.addEventListener('click', () => importDataFile.click());
+    importDataFile.addEventListener('change', async e => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        await importDataFromFile(file);
+        // Reset so re-selecting the same file fires the change event again.
+        importDataFile.value = '';
+    });
+
     // Quantity Modal
     const closeQty = wireModalDismiss(quantityModal, { cancelBtn: btnCancelQuantity, onClose: () => { pendingTaskId = null; } });
     quantityForm.addEventListener('submit', e => {
@@ -712,7 +976,8 @@ function setupEventListeners() {
         const result = await Training.finishWorkout(currentWorkoutDayId, customPlans, trainingHistory, dailyHistory, workoutEls());
         updateDashboard();
         goHome();
-        alert(`Stark! ${result.points.toFixed(1)} Punkte gesammelt! ${result.improvedExercises > 0 ? `(${result.improvedExercises}× Progression 🔥)` : ''}`);
+        const progressTxt = result.improvedExercises > 0 ? ` · ${result.improvedExercises}× Progression 🔥` : '';
+        showToast(`Stark! +${result.points.toFixed(1)} Pkt${progressTxt}`, 'success', null, 5000);
     });
 
     // Custom Training
@@ -732,10 +997,7 @@ function setupEventListeners() {
             customPlans
         );
         if (!plan) { showToast('Bitte füge mindestens eine Übung hinzu.'); return; }
-        Training.renderCustomPlansMenu(customPlans, customPlansContainer, async id => {
-            currentWorkoutDayId = id;
-            await Training.openWorkout(id, customPlans, trainingHistory, workoutEls());
-        });
+        renderCustomPlansMenuWithDelete();
         closeCustom();
     });
 }

@@ -643,6 +643,153 @@ button {
     z-index: 3000 !important;
 }
 
+/* Best-of-7 days card — sits below progress bar, above streak. */
+.best-day-display {
+    text-align: center;
+    margin: 6px 0 2px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    min-height: 18px;
+}
+.best-day-display .best-day-value {
+    color: #f59e0b;
+    font-weight: 600;
+}
+.best-day-display .best-day-today {
+    color: var(--success-color);
+    font-weight: 600;
+}
+
+/* Calendar modal layout */
+.calendar-modal-content {
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+}
+.calendar-list {
+    overflow-y: auto;
+    flex-grow: 1;
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    padding-right: 5px;
+}
+.calendar-footer {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--glass-border);
+}
+.btn-close-x {
+    padding: 4px 10px;
+    border-radius: 8px;
+}
+
+/* Delete button on calendar entries */
+.btn-delete-history-entry {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    cursor: pointer;
+    padding: 0 6px;
+    margin-left: 6px;
+    transition: color 0.15s;
+}
+.btn-delete-history-entry:hover {
+    color: var(--danger-color);
+}
+
+/* Task list header actions (Edit toggle + Neu) */
+.task-header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+#btn-edit-mode[aria-pressed="true"] {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+/* Edit-mode: hide the "execute" check button so accidental taps don't
+   complete a task; show edit + delete only. Drag handle stays usable. */
+.edit-mode .task-action:not(.delete-btn) {
+    display: none;
+}
+.edit-mode .task-done-check {
+    display: none;
+}
+.edit-mode .task-item {
+    background: rgba(59, 130, 246, 0.08);
+    border-color: rgba(59, 130, 246, 0.25);
+}
+.edit-mode .btn-edit-task {
+    background: rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 6px 10px;
+    color: var(--text-main);
+    font-size: 0.95rem;
+}
+.edit-mode .btn-edit-task:hover {
+    background: var(--primary-color);
+    color: #fff;
+}
+.edit-mode .delete-btn:hover {
+    background: var(--danger-color);
+    color: #fff;
+}
+
+/* Custom plan menu button: edit/delete actions */
+.custom-plan-row {
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+}
+.custom-plan-row .btn-training-day {
+    flex: 1;
+    min-width: 0;
+}
+.custom-plan-row .btn-custom-plan-action {
+    background: transparent;
+    border: 1px solid var(--glass-border);
+    color: var(--text-muted);
+    border-radius: 10px;
+    padding: 0 12px;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+.custom-plan-row .btn-custom-plan-action:hover {
+    color: var(--text-main);
+    border-color: var(--primary-color);
+}
+.custom-plan-row .btn-custom-plan-action.danger:hover {
+    color: var(--danger-color);
+    border-color: var(--danger-color);
+}
+
+/* Toast with action button (Undo) */
+.toast-action {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.6);
+    color: #fff;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 6px;
+    margin-left: 12px;
+    cursor: pointer;
+    font-family: inherit;
+}
+.toast-action:hover {
+    background: rgba(255,255,255,0.15);
+}
+
 /* Streak */
 .streak-display {
     text-align: center;
@@ -867,5 +1014,16 @@ button {
     .set-number {
         width: 18px;
         font-size: 0.85rem;
+    }
+    .section-header {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .task-header-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+    .calendar-footer {
+        flex-wrap: wrap;
     }
 }

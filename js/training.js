@@ -144,14 +144,28 @@ export async function savePlanExercises(planId, exercises, customPlans) {
     }
 }
 
-export function renderCustomPlansMenu(customPlans, container, onSelect) {
+// Renders the custom-plan list. `onDelete(planId)` is optional; when provided,
+// each plan row gets a 🗑 button that calls it after a stilkonform confirm.
+export function renderCustomPlansMenu(customPlans, container, onSelect, onDelete) {
     container.innerHTML = '';
     customPlans.forEach(plan => {
-        const btn = document.createElement('button');
-        btn.className = 'btn-training-day';
-        btn.innerHTML = `${plan.name}<span style="font-size:0.8rem;color:var(--text-muted);display:block;margin-top:5px;">${plan.exercises.length} Übungen (Faktor: ${plan.factor})</span>`;
-        btn.addEventListener('click', () => onSelect(plan.id));
-        container.appendChild(btn);
+        const row = document.createElement('div');
+        row.className = 'custom-plan-row';
+        const safeName = String(plan.name ?? '').replace(/[<>&"']/g, c => (
+            { '<':'&lt;', '>':'&gt;', '&':'&amp;', '"':'&quot;', "'":'&#39;' }[c]
+        ));
+        row.innerHTML = `
+            <button type="button" class="btn-training-day">
+                ${safeName}
+                <span style="font-size:0.8rem;color:var(--text-muted);display:block;margin-top:5px;">${plan.exercises.length} Übungen (Faktor: ${plan.factor})</span>
+            </button>
+            ${onDelete ? `<button type="button" class="btn-custom-plan-action danger" title="Plan löschen" aria-label="Plan ${safeName} löschen">🗑</button>` : ''}
+        `;
+        row.querySelector('.btn-training-day').addEventListener('click', () => onSelect(plan.id));
+        if (onDelete) {
+            row.querySelector('.btn-custom-plan-action.danger').addEventListener('click', () => onDelete(plan.id));
+        }
+        container.appendChild(row);
     });
 }
 
