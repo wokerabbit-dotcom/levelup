@@ -264,7 +264,13 @@ button {
 
 .task-done-check {
     color: var(--success-color);
-    font-size: 1.2rem;
+    font-size: 1.6rem;
+    width: 44px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 4px;
 }
 
 .task-item:hover {
@@ -288,14 +294,15 @@ button {
 
 .task-action {
     background: rgba(255, 255, 255, 0.1);
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 44px;
     border-radius: 50%;
     display: flex;
     justify-content: center;
     align-items: center;
     color: var(--text-main);
-    font-size: 1.2rem;
+    font-size: 1.35rem;
+    margin-right: 4px;
 }
 
 .task-action:hover {
