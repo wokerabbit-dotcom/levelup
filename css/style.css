@@ -717,6 +717,17 @@ button {
     border-color: var(--primary-color);
 }
 
+/* Edit + delete buttons only show in edit-mode — the default view stays
+   uncluttered (drag handle + name + execute button). */
+.btn-edit-task,
+.task-actions .delete-btn {
+    display: none;
+}
+.edit-mode .btn-edit-task,
+.edit-mode .task-actions .delete-btn {
+    display: inline-flex;
+}
+
 /* Edit-mode: hide the "execute" check button so accidental taps don't
    complete a task; show edit + delete only. Drag handle stays usable. */
 .edit-mode .task-action:not(.delete-btn) {
