@@ -286,7 +286,13 @@ async function init() {
 }
 
 function workoutEls() {
-    return { trainingMenu, workoutView, workoutTitle, workoutDateInput, workoutWarmupInput, workoutWarmupText: document.getElementById('workout-warmup-text'), workoutExercisesEl };
+    return {
+        trainingMenu, workoutView, workoutTitle, workoutDateInput, workoutWarmupInput,
+        workoutWarmupText: document.getElementById('workout-warmup-text'),
+        workoutExercisesEl,
+        workoutBodyweightStrip: document.getElementById('workout-bodyweight-strip'),
+        workoutBodyweightInput: document.getElementById('workout-bodyweight'),
+    };
 }
 
 // Re-renders the custom-plans list with both the "open workout" handler and a

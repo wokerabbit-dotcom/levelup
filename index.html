@@ -77,10 +77,16 @@
 
             <div id="workout-view" class="hidden">
                 <h3 id="workout-title" style="margin-bottom: 15px; color: var(--primary-color);"></h3>
-                
+
                 <div class="input-group" style="margin-bottom: 20px;">
                     <label for="workout-date">Wann hast du trainiert?</label>
                     <input type="date" id="workout-date" required>
+                </div>
+
+                <div id="workout-bodyweight-strip" class="bodyweight-strip hidden">
+                    <label for="workout-bodyweight">⚖️ Körpergewicht (für Gegengewicht-Übungen):</label>
+                    <input type="number" id="workout-bodyweight" min="20" max="300" step="0.1" value="80">
+                    <span>kg</span>
                 </div>
 
                 <div class="glass-panel" style="margin-bottom: 20px; padding: 15px;">
@@ -112,7 +118,7 @@
                 </div>
                 <div class="input-group">
                     <label for="task-points">Punkte</label>
-                    <input type="number" id="task-points" required placeholder="z.B. 10" step="0.5" value="10">
+                    <input type="number" id="task-points" required placeholder="z.B. 10" step="any" value="10">
                 </div>
                 <div class="input-group">
                     <label for="task-unit">Einheit</label>
@@ -153,7 +159,7 @@
                 </div>
                 <div class="input-group">
                     <label for="edit-task-points">Punkte</label>
-                    <input type="number" id="edit-task-points" required step="0.5">
+                    <input type="number" id="edit-task-points" required step="any">
                 </div>
                 <div class="input-group">
                     <label for="edit-task-unit">Einheit</label>
@@ -189,7 +195,7 @@
             <form id="quantity-form">
                 <div class="input-group">
                     <label for="quantity-input" id="quantity-label">Anzahl</label>
-                    <input type="number" id="quantity-input" required min="0.1" step="any" value="1" style="font-size:1.3rem; text-align:center; padding:15px;">
+                    <input type="number" id="quantity-input" required step="any" value="1" style="font-size:1.3rem; text-align:center; padding:15px;">
                 </div>
                 <div class="modal-actions">
                     <button type="button" id="btn-cancel-quantity" class="btn-secondary">Abbrechen</button>
