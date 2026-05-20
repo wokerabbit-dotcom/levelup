@@ -76,7 +76,11 @@
             </div>
 
             <div id="workout-view" class="hidden">
-                <h3 id="workout-title" style="margin-bottom: 15px; color: var(--primary-color);"></h3>
+                <div class="workout-toolbar">
+                    <h3 id="workout-title"></h3>
+                    <button id="btn-plan-edit-mode" type="button" class="btn-secondary"
+                            aria-pressed="false">✏️ Plan bearbeiten</button>
+                </div>
 
                 <div class="input-group" style="margin-bottom: 20px;">
                     <label for="workout-date">Wann hast du trainiert?</label>

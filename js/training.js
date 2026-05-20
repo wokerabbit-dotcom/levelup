@@ -191,6 +191,42 @@ function snapshotWorkoutDraft(els) {
     return draft;
 }
 
+// ─── Progression / Stall Detection ───────────────────────────────────────────
+// Auto-deload fires only when an exercise has missed its target on the most
+// recent N consecutive non-deload workouts. Lowered threshold = more
+// aggressive deload suggestions; raise if it triggers too easily.
+const STALL_THRESHOLD = 2;
+function isExerciseStalled(planHistory, exId) {
+    if (!planHistory?.length) return false;
+    let misses = 0;
+    for (let i = planHistory.length - 1; i >= 0; i--) {
+        const s = planHistory[i].states?.[exId];
+        if (!s) break;
+        if (s.wasDeload) break;          // deload week resets the counter
+        if (s.achievedTarget) return false;
+        misses++;
+        if (misses >= STALL_THRESHOLD) return true;
+    }
+    return false;
+}
+
+// Color a set input green/red based on how it compares to the user's last
+// performance for the same set index. Reads data-* attrs that openWorkout
+// embeds in the input. Empty value or no history → neutral (no class).
+function recolorSetInput(input) {
+    input.classList.remove('better', 'worse');
+    if (input.value === '') return;
+    const val = parseFloat(input.value);
+    if (!Number.isFinite(val)) return;
+    const isReps = input.classList.contains('set-reps');
+    const last = parseFloat(isReps ? input.dataset.lastReps : input.dataset.lastKg);
+    if (!Number.isFinite(last)) return;
+    if (val === last) return;
+    const assisted = !isReps && input.dataset.isAssisted === 'true';
+    const better = isReps ? (val > last) : (assisted ? val < last : val > last);
+    input.classList.add(better ? 'better' : 'worse');
+}
+
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
 export async function getResolvedPlan(id, customPlans) {
@@ -302,6 +338,10 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
         workoutBodyweightStrip.classList.toggle('hidden', !hasAssisted);
     }
 
+    // Smart-trigger deload uses the full plan history, not just the last
+    // workout. Replaces the old single-step lastWorkout.states detection.
+    const planHistory = trainingHistory[dayId] || [];
+
     plan.exercises.forEach((exItem, slotIndex) => {
         const activeExId = exItem.id;
         const libEntry = exerciseLib[activeExId];
@@ -309,43 +349,63 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
         const isAssisted = !!ex.isAssisted;
 
         const targetReps = parseInt(ex.targetReps) || 8;
-        let isDeload = false, isIncrease = false;
+        // Smart-trigger: auto-deload only after N consecutive missed targets.
+        // Set count stays at ex.sets — deload reduces intensity (-10 % kg),
+        // not volume.
+        const isAutoDeload = isExerciseStalled(planHistory, ex.id);
+        const setsCount = ex.sets;
 
-        if (lastWorkout?.states?.[ex.id]) {
-            const s = lastWorkout.states[ex.id];
-            if (s.achievedTarget && !s.wasDeload) isDeload = true;
-            else if (s.wasDeload) isIncrease = true;
-        }
-
-        const setsCount = isDeload ? 2 : ex.sets;
         let hintsHtml = '';
-        if (isDeload) hintsHtml = `<div class="deload-hint">🚨 <strong>Deload fällig!</strong> Nur <strong>2 Sätze × ${targetReps} Wdh</strong>, gleiches Gewicht.</div>`;
-        else if (isIncrease) hintsHtml = `<div class="increase-hint">🔥 <strong>Zeit für mehr!</strong> Versuch +5% Gewicht für ${ex.sets}×${targetReps}.</div>`;
+        if (isAutoDeload) {
+            hintsHtml = `<div class="deload-hint">🔄 <strong>Deload vorgeschlagen</strong> — die letzten ${STALL_THRESHOLD} Workouts haben das Ziel verfehlt. Empfehlung: <strong>−10 % Gewicht</strong> bei gleicher Satzzahl.</div>`;
+        }
 
         // Get last values — prefer per-exercise global store, fallback to plan history
         const exLastValues = lastValues[ex.id];
         const lastComment = exLastValues?.comment || '';
 
-        const kgLabel = isAssisted ? 'Assist (kg)' : 'kg';
         const setsHtml = Array.from({ length: setsCount }).map((_, i) => {
             // Try global last values first, then plan history
             const globalLastSet = exLastValues?.sets?.[i];
-            const histLastSet = lastWorkout?.exercises?.[ex.id]?.[i];
+            const histLastSet = planHistory[planHistory.length - 1]?.exercises?.[ex.id]?.[i];
             const lastSet = globalLastSet || histLastSet;
-            const lastKg = lastSet?.kg || '';
-            const lastReps = lastSet?.reps || '';
-            // Progression suggestion: more weight for normal, less assist for assistive.
-            let suggestKg = lastKg;
-            if (isIncrease && lastKg !== '' && Number.isFinite(parseFloat(lastKg))) {
+            const lastKg = lastSet?.kg;
+            const lastReps = lastSet?.reps;
+
+            // Per-set double progression:
+            //   - hit target last time  → +5 % (or -5 % assist) next time
+            //   - missed target         → same weight, retry
+            //   - auto-deload triggered → -10 % (or +10 % assist), constant volume
+            //   - no history            → empty (placeholder shows 0)
+            let suggestKg = '';
+            if (lastKg !== undefined && lastKg !== '' && Number.isFinite(parseFloat(lastKg))) {
                 const v = parseFloat(lastKg);
-                suggestKg = isAssisted
-                    ? Math.max(0, Math.round(v * 0.95 * 2) / 2)
-                    : Math.round(v * 1.05 * 2) / 2;
+                if (isAutoDeload) {
+                    suggestKg = isAssisted
+                        ? Math.round(v * 1.10 * 2) / 2
+                        : Math.max(0, Math.round(v * 0.90 * 2) / 2);
+                } else if (Number(lastReps) >= targetReps) {
+                    suggestKg = isAssisted
+                        ? Math.max(0, Math.round(v * 0.95 * 2) / 2)
+                        : Math.round(v * 1.05 * 2) / 2;
+                } else {
+                    suggestKg = v;
+                }
             }
+            const repsPlaceholder = (lastReps && Number(lastReps) > 0) ? lastReps : targetReps;
+            const kgPlaceholder = suggestKg !== '' ? suggestKg : 0;
             return `<div class="set-row">
                 <span class="set-number">${i+1}.</span>
-                <input type="number" class="set-input set-reps" placeholder="Wdh (z.B. ${lastReps||targetReps})" value="">
-                <input type="number" step="0.5" class="set-input set-kg" placeholder="${kgLabel} (z.B. ${lastKg||0})" value="${suggestKg}">
+                <input type="number" class="set-input set-reps"
+                       placeholder="${repsPlaceholder}" value=""
+                       data-last-reps="${lastReps ?? ''}"
+                       data-target-reps="${targetReps}">
+                <input type="number" step="0.5" class="set-input set-kg"
+                       placeholder="${kgPlaceholder}" value=""
+                       data-last-kg="${lastKg ?? ''}"
+                       data-is-assisted="${isAssisted ? 'true' : 'false'}">
+                <button type="button" class="btn-remove-set" title="Diesen Satz entfernen"
+                        aria-label="Satz ${i+1} entfernen">✕</button>
             </div>`;
         }).join('');
 
@@ -357,10 +417,11 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
 
         const div = document.createElement('div');
         div.className = 'exercise-card';
-        div.setAttribute('data-is-deload', isDeload ? 'true' : 'false');
+        div.setAttribute('data-is-deload', isAutoDeload ? 'true' : 'false');
         div.setAttribute('data-slot-index', slotIndex);
         div.innerHTML = `
             <div class="exercise-header">
+                <span class="drag-handle drag-handle-exercise" aria-hidden="true" title="Zum Verschieben halten">⋮⋮</span>
                 <div class="exercise-select-wrapper">
                     <select class="exercise-dropdown" data-slot-index="${slotIndex}" data-original-id="${ex.id}">
                         ${optionsHtml}
@@ -371,6 +432,13 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
                     <span class="exercise-target">${setsCount} Sätze x ${ex.targetReps} Wdh</span>
                     <button class="btn-remove-ex-slot" data-slot="${slotIndex}" style="background:transparent;border:none;color:var(--danger-color);font-size:1.1rem;cursor:pointer;padding:0;" title="Übung entfernen">🗑</button>
                 </div>
+            </div>
+            <div class="exercise-edit-controls">
+                <button type="button" class="btn-move-up"   data-slot="${slotIndex}" title="Übung nach oben"   aria-label="Übung nach oben verschieben">▲</button>
+                <button type="button" class="btn-move-down" data-slot="${slotIndex}" title="Übung nach unten"  aria-label="Übung nach unten verschieben">▼</button>
+                <button type="button" class="btn-set-minus" data-slot="${slotIndex}" title="Ein Satz weniger" aria-label="Ein Satz weniger">−</button>
+                <span class="set-count">${setsCount} Sätze</span>
+                <button type="button" class="btn-set-plus"  data-slot="${slotIndex}" title="Ein Satz mehr"    aria-label="Ein Satz mehr">+</button>
             </div>
             ${hintsHtml}
             ${isAssisted ? `<div class="assist-hint">⚖️ Gegengewicht-Übung — weniger Assist-kg bringt mehr Punkte.</div>` : ''}
@@ -442,11 +510,15 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
     workoutExercisesEl.appendChild(addBtn);
 
     if (window.Sortable) {
+        // Dedicated drag handle (mirror of the task-list mobile fix).
+        // forceFallback uses Sortable's own pointer-based drag, which is
+        // consistent across iOS/Android touch.
         new Sortable(workoutExercisesEl, {
             animation: 150,
             draggable: '.exercise-card',
-            delay: 800, // 800ms delay for touch
-            delayOnTouchOnly: true,
+            handle: '.drag-handle-exercise',
+            forceFallback: true,
+            fallbackTolerance: 5,
             onEnd: async function () {
                 const newExercises = [];
                 Array.from(workoutExercisesEl.querySelectorAll('.exercise-card')).forEach(card => {
@@ -458,6 +530,56 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
             }
         });
     }
+
+    // ─── Delegated click handler for set-remove + plan-edit controls ─────
+    workoutExercisesEl.addEventListener('click', async (e) => {
+        const t = e.target;
+
+        // Per-workout set-row removal (✕). Does NOT touch ex.sets in the
+        // plan — only this workout's DOM. Autosave snapshot picks up the
+        // change via the bubbled change event.
+        const removeSetBtn = t.closest && t.closest('.btn-remove-set');
+        if (removeSetBtn) {
+            const row = removeSetBtn.closest('.set-row');
+            if (row) row.remove();
+            workoutExercisesEl.dispatchEvent(new Event('change', { bubbles: true }));
+            return;
+        }
+
+        // Plan-edit-mode controls. data-slot is on the button itself.
+        const slot = parseInt(t.dataset?.slot, 10);
+        if (Number.isNaN(slot)) return;
+        let changed = false;
+        if (t.classList.contains('btn-move-up') && slot > 0) {
+            [plan.exercises[slot - 1], plan.exercises[slot]] = [plan.exercises[slot], plan.exercises[slot - 1]];
+            changed = true;
+        } else if (t.classList.contains('btn-move-down') && slot < plan.exercises.length - 1) {
+            [plan.exercises[slot], plan.exercises[slot + 1]] = [plan.exercises[slot + 1], plan.exercises[slot]];
+            changed = true;
+        } else if (t.classList.contains('btn-set-minus')) {
+            // Resolve current sets via the library if the plan entry is bare.
+            const libCur = exerciseLib[plan.exercises[slot].id]?.sets;
+            const cur = plan.exercises[slot].sets || libCur || 1;
+            plan.exercises[slot] = { ...plan.exercises[slot], sets: Math.max(1, cur - 1) };
+            changed = true;
+        } else if (t.classList.contains('btn-set-plus')) {
+            const libCur = exerciseLib[plan.exercises[slot].id]?.sets;
+            const cur = plan.exercises[slot].sets || libCur || 1;
+            plan.exercises[slot] = { ...plan.exercises[slot], sets: cur + 1 };
+            changed = true;
+        }
+        if (changed) {
+            await savePlanExercises(dayId, plan.exercises, customPlans);
+            await openWorkout(dayId, customPlans, trainingHistory, els);
+        }
+    });
+
+    // ─── Input → color-code (better/worse) ───────────────────────────────
+    workoutExercisesEl.addEventListener('input', (e) => {
+        const el = e.target;
+        if (!(el instanceof HTMLInputElement) || !el.classList.contains('set-input')) return;
+        recolorSetInput(el);
+    });
 
     // ─── Draft restore + autosave ────────────────────────────────────────
     // Restore previous draft for this plan (if any). The draft wins over
@@ -488,6 +610,9 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
             if (commentEl && draft.comments && exId in draft.comments) commentEl.value = draft.comments[exId];
             if (descEl && draft.descriptions && exId in draft.descriptions) descEl.value = draft.descriptions[exId];
         });
+        // Re-color any restored values so the better/worse hint is visible
+        // immediately on draft load.
+        workoutExercisesEl.querySelectorAll('.set-input').forEach(recolorSetInput);
         showDraftStatus(els, `Entwurf wiederhergestellt (${formatDraftTime(draft.savedAt)})`);
     }
 
@@ -700,7 +825,11 @@ export async function finishWorkout(dayId, customPlans, trainingHistory, dailyHi
             }
         });
 
-        if (setsDone < targetSets && !wasDeloadUI) achievedAll = false;
+        // Don't penalise the user for trimming sets via the ✕ button:
+        // achievedTarget reflects what they actually did, not the plan's
+        // original set count. A completely empty exercise (no reps anywhere)
+        // still counts as "not achieved" via the reps check above.
+        if (setsDone === 0 && !wasDeloadUI) achievedAll = false;
         newWorkoutData.states[exId] = { achievedTarget: achievedAll && !wasDeloadUI, wasDeload: wasDeloadUI };
         if (lastWorkout && curVolume > lastVolume && curVolume > 0 && !wasDeloadUI) improvedExercises++;
 
