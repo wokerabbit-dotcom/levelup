@@ -1,4 +1,4 @@
-const CACHE_NAME = 'levelup-v16';
+const CACHE_NAME = 'levelup-v18';
 
 // Only same-origin assets are precached; external URLs (Google Fonts, etc.)
 // are cached opportunistically by the fetch handler. `addAll` is all-or-nothing,

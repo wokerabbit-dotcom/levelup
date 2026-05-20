@@ -528,6 +528,41 @@ button {
     cursor: pointer;
 }
 
+/* Bodyweight strip — appears above the exercise list when any assistive
+   exercise is in the plan, so the user can correct the value that feeds
+   into the (bodyweight − assist) formula. */
+.bodyweight-strip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(139, 92, 246, 0.10);
+    border: 1px solid rgba(139, 92, 246, 0.35);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 18px;
+    font-size: 0.9rem;
+    color: var(--text-main);
+    flex-wrap: wrap;
+}
+.bodyweight-strip label {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.bodyweight-strip input {
+    width: 80px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--glass-border);
+    background: rgba(0,0,0,0.2);
+    color: var(--text-main);
+    font-family: 'Outfit', sans-serif;
+    text-align: center;
+}
+.bodyweight-strip input:focus {
+    outline: none;
+    border-color: #8b5cf6;
+}
+
 /* Assistive-exercise hint banner — surfaces the inverted-kg rule so users
    know less assist = more points. */
 .assist-hint {

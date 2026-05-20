@@ -99,6 +99,20 @@ export async function setExerciseAssisted(exId, isAssisted) {
     return lib;
 }
 
+// ─── Bodyweight (used for assistive-exercise scoring) ────────────────────────
+// Persisted under taskPWA_bodyweight. Default 80 kg is a reasonable midpoint
+// for an adult trainee; the user can edit it directly in the workout view.
+export async function getBodyweight() {
+    const v = await storage.get('bodyweight', 80);
+    const n = parseFloat(v);
+    return Number.isFinite(n) && n > 0 ? n : 80;
+}
+export async function setBodyweight(kg) {
+    const n = parseFloat(kg);
+    if (!Number.isFinite(n) || n <= 0) return;
+    await storage.set('bodyweight', n);
+}
+
 // ─── Per-Exercise Last Values ────────────────────────────────────────────────
 // Stored as: { [exerciseId]: { sets: [ {kg, reps}, ... ], comment: '' } }
 export async function getExerciseLastValues() {
@@ -246,11 +260,20 @@ export function renderCustomPlansMenu(customPlans, container, onSelect, onDelete
 // ─── Open Workout (with dropdown swap, description, comment) ─────────────────
 export async function openWorkout(dayId, customPlans, trainingHistory, els) {
     const plan = await getResolvedPlan(dayId, customPlans);
-    const { trainingMenu, workoutView, workoutTitle, workoutDateInput, workoutWarmupInput, workoutWarmupText, workoutExercisesEl } = els;
+    const { trainingMenu, workoutView, workoutTitle, workoutDateInput, workoutWarmupInput, workoutWarmupText, workoutExercisesEl, workoutBodyweightStrip, workoutBodyweightInput } = els;
 
     trainingMenu.classList.add('hidden');
     workoutView.classList.remove('hidden');
     workoutTitle.textContent = plan.name;
+
+    // Bodyweight strip: hidden by default, revealed below if the resolved plan
+    // contains any assistive exercise. Value is persisted on change.
+    if (workoutBodyweightStrip && workoutBodyweightInput) {
+        workoutBodyweightStrip.classList.add('hidden');
+        const bw = await getBodyweight();
+        workoutBodyweightInput.value = bw;
+        workoutBodyweightInput.onchange = () => setBodyweight(workoutBodyweightInput.value);
+    }
 
     const d = new Date();
     d.setHours(d.getHours() - 3);
@@ -264,10 +287,20 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
 
     const exerciseLib = await getExerciseLibrary();
     const lastValues = await getExerciseLastValues();
+    const bodyweight = await getBodyweight();
 
     // Training history for deload/increase logic (per-plan)
     const hist = trainingHistory[dayId];
     const lastWorkout = hist && hist.length > 0 ? hist[hist.length - 1] : null;
+
+    // Reveal the bodyweight strip iff any resolved exercise is assistive.
+    const hasAssisted = plan.exercises.some(ex => {
+        const lib = exerciseLib[ex.id];
+        return lib && lib.isAssisted;
+    });
+    if (workoutBodyweightStrip) {
+        workoutBodyweightStrip.classList.toggle('hidden', !hasAssisted);
+    }
 
     plan.exercises.forEach((exItem, slotIndex) => {
         const activeExId = exItem.id;
@@ -612,7 +645,8 @@ export async function finishWorkout(dayId, customPlans, trainingHistory, dailyHi
     const lastWorkout = hist && hist.length > 0 ? hist[hist.length - 1] : null;
 
     let points = workoutWarmupInput.checked ? 20 : 0;
-    
+    const bodyweight = await getBodyweight();
+
     // Save warmup text
     await storage.set('warmupText', workoutWarmupText.value);
     let improvedExercises = 0;
@@ -646,17 +680,19 @@ export async function finishWorkout(dayId, customPlans, trainingHistory, dailyHi
             newWorkoutData.exercises[exId].push({ kg, reps });
             setsData.push({ kg, reps });
             // Assistive exercises (dips/pull-ups on assist machine): the kg
-            // input is the *assist* load, so less of it means a harder set.
-            // Flip the kg term in both the points formula and the volume
-            // metric used for progression detection. The volume offset
-            // `factor - kg` keeps values comparable across kg ranges and
-            // strictly positive as long as assist ≤ factor.
-            const effPoints = isAssisted ? (-kg) : kg;
-            points += reps * (1 + (effPoints / factor));
+            // input is the *assist* load, so less of it means more of the
+            // user's own bodyweight is being moved. Effective load is
+            // clamped at 0 so over-assist doesn't score below bodyweight-
+            // less-than-bodyweight noise.
+            const effLoad = isAssisted ? Math.max(0, bodyweight - kg) : kg;
+            points += reps * (1 + (effLoad / factor));
             if (isAssisted) {
-                curVolume += Math.max(0, factor - kg) * reps;
+                curVolume += (effLoad || 1) * reps;
                 const lset = lastWorkout?.exercises?.[exId]?.[idx];
-                if (lset) lastVolume += Math.max(0, factor - (lset.kg || 0)) * lset.reps;
+                if (lset) {
+                    const lastEff = Math.max(0, bodyweight - (lset.kg || 0));
+                    lastVolume += (lastEff || 1) * lset.reps;
+                }
             } else {
                 curVolume += (kg > 0 ? kg : 1) * reps;
                 const lset = lastWorkout?.exercises?.[exId]?.[idx];
