@@ -228,8 +228,8 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
             const suggestKg = isIncrease && lastKg > 0 ? Math.round(lastKg * 1.05 * 2) / 2 : lastKg;
             return `<div class="set-row">
                 <span class="set-number">${i+1}.</span>
-                <input type="number" step="0.5" class="set-input set-kg" placeholder="kg (z.B. ${lastKg||0})" value="${suggestKg}">
                 <input type="number" class="set-input set-reps" placeholder="Wdh (z.B. ${lastReps||targetReps})" value="">
+                <input type="number" step="0.5" class="set-input set-kg" placeholder="kg (z.B. ${lastKg||0})" value="${suggestKg}">
             </div>`;
         }).join('');
 
