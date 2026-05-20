@@ -196,6 +196,7 @@ const workoutDateInput  = document.getElementById('workout-date');
 const workoutWarmupInput= document.getElementById('workout-warmup');
 const workoutExercisesEl= document.getElementById('workout-exercises');
 const btnFinishWorkout  = document.getElementById('btn-finish-workout');
+const btnPlanEditMode   = document.getElementById('btn-plan-edit-mode');
 const customPlansContainer = document.getElementById('custom-plans-container');
 const btnCreateCustom   = document.getElementById('btn-create-custom');
 const customTrainingModal = document.getElementById('custom-training-modal');
@@ -877,6 +878,12 @@ function goHome() {
     formEditTask.reset();
     mainView.classList.remove('hidden');
     if (editMode) setEditMode(false);
+    // Reset plan-edit-mode so the next workout opens clean.
+    if (workoutView.classList.contains('plan-edit-mode')) {
+        workoutView.classList.remove('plan-edit-mode');
+        btnPlanEditMode.setAttribute('aria-pressed', 'false');
+        btnPlanEditMode.textContent = '✏️ Plan bearbeiten';
+    }
 }
 
 // Close the top-most visible modal on Escape. Iterates in reverse z-stack
@@ -1007,6 +1014,17 @@ function setupEventListeners() {
         goHome();
         const progressTxt = result.improvedExercises > 0 ? ` · ${result.improvedExercises}× Progression 🔥` : '';
         showToast(`Stark! +${result.points.toFixed(1)} Pkt${progressTxt}`, 'success', null, 5000);
+    });
+
+    // Plan-Edit-Modus: toggles a class on #workout-view that reveals the
+    // ▲/▼/+/- controls under each exercise header. The user wanted this
+    // separate from "delete a single set for today" (✕), so this only
+    // affects persistent plan structure.
+    btnPlanEditMode.addEventListener('click', () => {
+        const on = !workoutView.classList.contains('plan-edit-mode');
+        workoutView.classList.toggle('plan-edit-mode', on);
+        btnPlanEditMode.setAttribute('aria-pressed', on ? 'true' : 'false');
+        btnPlanEditMode.textContent = on ? '✓ Fertig' : '✏️ Plan bearbeiten';
     });
 
     // Custom Training
