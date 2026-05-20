@@ -528,6 +528,17 @@ button {
     cursor: pointer;
 }
 
+/* Assistive-exercise hint banner — surfaces the inverted-kg rule so users
+   know less assist = more points. */
+.assist-hint {
+    background: rgba(139, 92, 246, 0.15);
+    border-left: 4px solid #8b5cf6;
+    padding: 10px;
+    margin-bottom: 15px;
+    border-radius: 4px;
+    font-size: 0.88rem;
+}
+
 /* Deload Styling */
 .deload-hint {
     background: rgba(239, 68, 68, 0.15);
@@ -806,6 +817,24 @@ button {
 }
 .toast-action:hover {
     background: rgba(255,255,255,0.15);
+}
+
+/* Workout draft status — appears under the workout title and flashes
+   briefly each time autosave fires. */
+.workout-draft-status {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: -8px 0 14px;
+    min-height: 1.1em;
+    transition: opacity 0.25s ease;
+}
+.workout-draft-status.flash {
+    animation: draft-flash 1.6s ease-out 1;
+}
+@keyframes draft-flash {
+    0%   { color: var(--success-color); opacity: 1; }
+    60%  { color: var(--success-color); opacity: 1; }
+    100% { color: var(--text-muted);    opacity: 0.85; }
 }
 
 /* Streak */

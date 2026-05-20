@@ -57,10 +57,20 @@ export async function getExerciseLibrary() {
         // Seed from built-in plans
         Object.values(BUILT_IN_PLANS).forEach(plan => {
             plan.exercises.forEach(ex => {
-                lib[ex.id] = { id: ex.id, name: ex.name, sets: ex.sets, targetReps: ex.targetReps, description: '' };
+                lib[ex.id] = { id: ex.id, name: ex.name, sets: ex.sets, targetReps: ex.targetReps, description: '', isAssisted: false };
             });
         });
         await storage.set('exerciseLibrary', lib);
+    } else {
+        // Backfill isAssisted on legacy entries that predate the flag.
+        let mutated = false;
+        for (const id in lib) {
+            if (lib[id] && typeof lib[id].isAssisted !== 'boolean') {
+                lib[id].isAssisted = false;
+                mutated = true;
+            }
+        }
+        if (mutated) await storage.set('exerciseLibrary', lib);
     }
     return lib;
 }
@@ -72,8 +82,19 @@ export async function saveExerciseToLibrary(exercise) {
         name: exercise.name,
         sets: exercise.sets,
         targetReps: exercise.targetReps,
-        description: exercise.description || ''
+        description: exercise.description || '',
+        isAssisted: !!exercise.isAssisted,
     };
+    await storage.set('exerciseLibrary', lib);
+    return lib;
+}
+
+// Toggle the assistive flag on an existing exercise. Used by the in-card
+// checkbox so the change persists without reopening the workout.
+export async function setExerciseAssisted(exId, isAssisted) {
+    const lib = await getExerciseLibrary();
+    if (!lib[exId]) return lib;
+    lib[exId].isAssisted = !!isAssisted;
     await storage.set('exerciseLibrary', lib);
     return lib;
 }
@@ -101,6 +122,59 @@ export async function savePlanOverride(planId, slotIndex, exerciseId) {
     if (!overrides[planId]) overrides[planId] = {};
     overrides[planId][slotIndex] = exerciseId;
     await storage.set('planOverrides', overrides);
+}
+
+// ─── Workout Drafts (autosave during a workout) ──────────────────────────────
+// Stored as: { [planId]: { dateStr, savedAt, warmup, warmupText, sets: { [exId]: [{kg, reps}, ...] }, comments: { [exId]: str }, descriptions: { [exId]: str } } }
+// A draft is cleared after a successful finishWorkout. If the user reloads
+// mid-workout (or the SW updates), openWorkout restores the draft.
+export async function getWorkoutDraft(planId) {
+    const all = await storage.get('workoutDrafts', {});
+    return all[planId] || null;
+}
+
+export async function saveWorkoutDraft(planId, draft) {
+    const all = await storage.get('workoutDrafts', {});
+    all[planId] = { ...draft, savedAt: Date.now() };
+    await storage.set('workoutDrafts', all);
+}
+
+export async function clearWorkoutDraft(planId) {
+    const all = await storage.get('workoutDrafts', {});
+    if (!(planId in all)) return;
+    delete all[planId];
+    await storage.set('workoutDrafts', all);
+}
+
+// Reads the current workout DOM and serializes it into a draft object.
+// Lives near the storage helpers so the schema stays in one place.
+function snapshotWorkoutDraft(els) {
+    const { workoutDateInput, workoutWarmupInput, workoutWarmupText, workoutExercisesEl } = els;
+    const draft = {
+        dateStr: workoutDateInput.value,
+        warmup: workoutWarmupInput.checked,
+        warmupText: workoutWarmupText.value,
+        sets: {},
+        comments: {},
+        descriptions: {},
+    };
+    workoutExercisesEl.querySelectorAll('.exercise-card').forEach(card => {
+        const setContainer = card.querySelector('.exercise-sets');
+        if (!setContainer) return;
+        const exId = setContainer.getAttribute('data-ex-id');
+        const sets = [];
+        setContainer.querySelectorAll('.set-row').forEach(row => {
+            const kgRaw = row.querySelector('.set-kg').value;
+            const repsRaw = row.querySelector('.set-reps').value;
+            sets.push({ kg: kgRaw, reps: repsRaw });
+        });
+        draft.sets[exId] = sets;
+        const commentEl = card.querySelector('.exercise-comment');
+        const descEl = card.querySelector('.exercise-description');
+        if (commentEl) draft.comments[exId] = commentEl.value;
+        if (descEl) draft.descriptions[exId] = descEl.value;
+    });
+    return draft;
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
@@ -198,7 +272,8 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
     plan.exercises.forEach((exItem, slotIndex) => {
         const activeExId = exItem.id;
         const libEntry = exerciseLib[activeExId];
-        const ex = libEntry ? { ...exItem, id: libEntry.id, name: libEntry.name, sets: exItem.sets || libEntry.sets, targetReps: exItem.targetReps || libEntry.targetReps, description: libEntry.description || '' } : exItem;
+        const ex = libEntry ? { ...exItem, id: libEntry.id, name: libEntry.name, sets: exItem.sets || libEntry.sets, targetReps: exItem.targetReps || libEntry.targetReps, description: libEntry.description || '', isAssisted: !!libEntry.isAssisted } : exItem;
+        const isAssisted = !!ex.isAssisted;
 
         const targetReps = parseInt(ex.targetReps) || 8;
         let isDeload = false, isIncrease = false;
@@ -218,6 +293,7 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
         const exLastValues = lastValues[ex.id];
         const lastComment = exLastValues?.comment || '';
 
+        const kgLabel = isAssisted ? 'Assist (kg)' : 'kg';
         const setsHtml = Array.from({ length: setsCount }).map((_, i) => {
             // Try global last values first, then plan history
             const globalLastSet = exLastValues?.sets?.[i];
@@ -225,11 +301,18 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
             const lastSet = globalLastSet || histLastSet;
             const lastKg = lastSet?.kg || '';
             const lastReps = lastSet?.reps || '';
-            const suggestKg = isIncrease && lastKg > 0 ? Math.round(lastKg * 1.05 * 2) / 2 : lastKg;
+            // Progression suggestion: more weight for normal, less assist for assistive.
+            let suggestKg = lastKg;
+            if (isIncrease && lastKg !== '' && Number.isFinite(parseFloat(lastKg))) {
+                const v = parseFloat(lastKg);
+                suggestKg = isAssisted
+                    ? Math.max(0, Math.round(v * 0.95 * 2) / 2)
+                    : Math.round(v * 1.05 * 2) / 2;
+            }
             return `<div class="set-row">
                 <span class="set-number">${i+1}.</span>
                 <input type="number" class="set-input set-reps" placeholder="Wdh (z.B. ${lastReps||targetReps})" value="">
-                <input type="number" step="0.5" class="set-input set-kg" placeholder="kg (z.B. ${lastKg||0})" value="${suggestKg}">
+                <input type="number" step="0.5" class="set-input set-kg" placeholder="${kgLabel} (z.B. ${lastKg||0})" value="${suggestKg}">
             </div>`;
         }).join('');
 
@@ -257,6 +340,7 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
                 </div>
             </div>
             ${hintsHtml}
+            ${isAssisted ? `<div class="assist-hint">⚖️ Gegengewicht-Übung — weniger Assist-kg bringt mehr Punkte.</div>` : ''}
             <div class="exercise-meta-section">
                 <details class="exercise-details">
                     <summary class="exercise-details-summary">📋 Beschreibung & Notizen</summary>
@@ -269,10 +353,16 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
                             <label>Kommentar / Notizen</label>
                             <textarea class="exercise-comment" placeholder="z.B. 'Grip etwas breiter', 'Schulter zwickt'..." rows="2">${lastComment}</textarea>
                         </div>
+                        <div class="exercise-meta-field">
+                            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; text-transform:none; letter-spacing:0;">
+                                <input type="checkbox" class="exercise-assist-toggle" ${isAssisted ? 'checked' : ''} style="width:18px; height:18px;">
+                                <span>Gegengewicht-Übung (z. B. Dips/Klimmzüge an der Assist-Maschine)</span>
+                            </label>
+                        </div>
                     </div>
                 </details>
             </div>
-            <div class="exercise-sets" data-ex-id="${ex.id}" data-target-sets="${ex.sets}" data-target-reps="${targetReps}">
+            <div class="exercise-sets" data-ex-id="${ex.id}" data-target-sets="${ex.sets}" data-target-reps="${targetReps}" data-is-assisted="${isAssisted ? 'true' : 'false'}">
                 ${setsHtml}
             </div>`;
         workoutExercisesEl.appendChild(div);
@@ -297,6 +387,16 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
                 await openWorkout(dayId, customPlans, trainingHistory, els);
             }
         });
+
+        // Persist the assistive flag on toggle and re-render so the kg
+        // placeholder / hint banner update immediately.
+        const assistToggle = div.querySelector('.exercise-assist-toggle');
+        if (assistToggle) {
+            assistToggle.addEventListener('change', async (e) => {
+                await setExerciseAssisted(ex.id, e.target.checked);
+                await openWorkout(dayId, customPlans, trainingHistory, els);
+            });
+        }
     });
 
     const addBtn = document.createElement('button');
@@ -325,6 +425,91 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
             }
         });
     }
+
+    // ─── Draft restore + autosave ────────────────────────────────────────
+    // Restore previous draft for this plan (if any). The draft wins over
+    // last-values / lastWorkout suggestions because it represents the user's
+    // current, unfinished workout.
+    const draft = await getWorkoutDraft(dayId);
+    if (draft) {
+        if (draft.dateStr && draft.dateStr <= todayKey) workoutDateInput.value = draft.dateStr;
+        if (typeof draft.warmup === 'boolean') workoutWarmupInput.checked = draft.warmup;
+        if (typeof draft.warmupText === 'string') workoutWarmupText.value = draft.warmupText;
+        workoutExercisesEl.querySelectorAll('.exercise-card').forEach(card => {
+            const setContainer = card.querySelector('.exercise-sets');
+            if (!setContainer) return;
+            const exId = setContainer.getAttribute('data-ex-id');
+            const draftSets = draft.sets?.[exId];
+            if (Array.isArray(draftSets)) {
+                setContainer.querySelectorAll('.set-row').forEach((row, i) => {
+                    const ds = draftSets[i];
+                    if (!ds) return;
+                    // Empty strings are valid (the user might have cleared the
+                    // pre-filled kg from a previous workout intentionally).
+                    if (ds.kg !== undefined) row.querySelector('.set-kg').value = ds.kg;
+                    if (ds.reps !== undefined) row.querySelector('.set-reps').value = ds.reps;
+                });
+            }
+            const commentEl = card.querySelector('.exercise-comment');
+            const descEl = card.querySelector('.exercise-description');
+            if (commentEl && draft.comments && exId in draft.comments) commentEl.value = draft.comments[exId];
+            if (descEl && draft.descriptions && exId in draft.descriptions) descEl.value = draft.descriptions[exId];
+        });
+        showDraftStatus(els, `Entwurf wiederhergestellt (${formatDraftTime(draft.savedAt)})`);
+    }
+
+    // Debounced autosave on any input/change in the workout view. 400 ms is
+    // long enough to batch fast typing on the comment field, short enough
+    // to feel responsive on the set inputs.
+    let saveTimer = null;
+    let saveSeq = 0;
+    const scheduleSave = () => {
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(async () => {
+            const mySeq = ++saveSeq;
+            const snap = snapshotWorkoutDraft(els);
+            await saveWorkoutDraft(dayId, snap);
+            // Skip the status flash if a newer save kicked off in the meantime.
+            if (mySeq === saveSeq) showDraftStatus(els, '💾 Entwurf gespeichert');
+        }, 400);
+    };
+    const events = ['input', 'change'];
+    [workoutDateInput, workoutWarmupInput, workoutWarmupText].forEach(el => {
+        events.forEach(ev => el.addEventListener(ev, scheduleSave));
+    });
+    workoutExercisesEl.addEventListener('input', scheduleSave);
+    workoutExercisesEl.addEventListener('change', scheduleSave);
+}
+
+// Brief inline status line below the workout title. Lazily created so we
+// don't have to touch index.html for every minor surface.
+function showDraftStatus(els, msg) {
+    const { workoutView } = els;
+    let el = workoutView.querySelector('.workout-draft-status');
+    if (!el) {
+        el = document.createElement('div');
+        el.className = 'workout-draft-status';
+        // Anchor right under the workout title.
+        const title = workoutView.querySelector('#workout-title');
+        if (title && title.parentNode) {
+            title.parentNode.insertBefore(el, title.nextSibling);
+        } else {
+            workoutView.prepend(el);
+        }
+    }
+    el.textContent = msg;
+    el.classList.remove('flash');
+    void el.offsetWidth;
+    el.classList.add('flash');
+}
+
+function formatDraftTime(ts) {
+    if (!ts) return '';
+    const diffSec = Math.round((Date.now() - ts) / 1000);
+    if (diffSec < 60) return 'gerade eben';
+    if (diffSec < 3600) return `vor ${Math.round(diffSec / 60)} min`;
+    const d = new Date(ts);
+    return d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 // ─── New Exercise Inline Modal ───────────────────────────────────────────────
@@ -441,6 +626,7 @@ export async function finishWorkout(dayId, customPlans, trainingHistory, dailyHi
         const targetSets = parseInt(setContainer.getAttribute('data-target-sets'));
         const targetReps = parseInt(setContainer.getAttribute('data-target-reps'));
         const wasDeloadUI = card.getAttribute('data-is-deload') === 'true';
+        const isAssisted = setContainer.getAttribute('data-is-assisted') === 'true';
 
         // Get comment and description
         const commentEl = card.querySelector('.exercise-comment');
@@ -459,10 +645,23 @@ export async function finishWorkout(dayId, customPlans, trainingHistory, dailyHi
             if (reps < targetReps) achievedAll = false;
             newWorkoutData.exercises[exId].push({ kg, reps });
             setsData.push({ kg, reps });
-            points += reps * (1 + (kg / factor));
-            curVolume += (kg > 0 ? kg : 1) * reps;
-            const lset = lastWorkout?.exercises?.[exId]?.[idx];
-            if (lset) lastVolume += (lset.kg > 0 ? lset.kg : 1) * lset.reps;
+            // Assistive exercises (dips/pull-ups on assist machine): the kg
+            // input is the *assist* load, so less of it means a harder set.
+            // Flip the kg term in both the points formula and the volume
+            // metric used for progression detection. The volume offset
+            // `factor - kg` keeps values comparable across kg ranges and
+            // strictly positive as long as assist ≤ factor.
+            const effPoints = isAssisted ? (-kg) : kg;
+            points += reps * (1 + (effPoints / factor));
+            if (isAssisted) {
+                curVolume += Math.max(0, factor - kg) * reps;
+                const lset = lastWorkout?.exercises?.[exId]?.[idx];
+                if (lset) lastVolume += Math.max(0, factor - (lset.kg || 0)) * lset.reps;
+            } else {
+                curVolume += (kg > 0 ? kg : 1) * reps;
+                const lset = lastWorkout?.exercises?.[exId]?.[idx];
+                if (lset) lastVolume += (lset.kg > 0 ? lset.kg : 1) * lset.reps;
+            }
         });
 
         if (setsDone < targetSets && !wasDeloadUI) achievedAll = false;
@@ -503,6 +702,9 @@ export async function finishWorkout(dayId, customPlans, trainingHistory, dailyHi
 
     // Wait for all save promises
     await Promise.all(savePromises);
+
+    // Workout is committed → discard the autosave draft for this plan.
+    await clearWorkoutDraft(dayId);
 
     return { points, improvedExercises };
 }
