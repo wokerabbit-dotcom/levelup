@@ -103,6 +103,59 @@ export async function savePlanOverride(planId, slotIndex, exerciseId) {
     await storage.set('planOverrides', overrides);
 }
 
+// ─── Workout Drafts (autosave during a workout) ──────────────────────────────
+// Stored as: { [planId]: { dateStr, savedAt, warmup, warmupText, sets: { [exId]: [{kg, reps}, ...] }, comments: { [exId]: str }, descriptions: { [exId]: str } } }
+// A draft is cleared after a successful finishWorkout. If the user reloads
+// mid-workout (or the SW updates), openWorkout restores the draft.
+export async function getWorkoutDraft(planId) {
+    const all = await storage.get('workoutDrafts', {});
+    return all[planId] || null;
+}
+
+export async function saveWorkoutDraft(planId, draft) {
+    const all = await storage.get('workoutDrafts', {});
+    all[planId] = { ...draft, savedAt: Date.now() };
+    await storage.set('workoutDrafts', all);
+}
+
+export async function clearWorkoutDraft(planId) {
+    const all = await storage.get('workoutDrafts', {});
+    if (!(planId in all)) return;
+    delete all[planId];
+    await storage.set('workoutDrafts', all);
+}
+
+// Reads the current workout DOM and serializes it into a draft object.
+// Lives near the storage helpers so the schema stays in one place.
+function snapshotWorkoutDraft(els) {
+    const { workoutDateInput, workoutWarmupInput, workoutWarmupText, workoutExercisesEl } = els;
+    const draft = {
+        dateStr: workoutDateInput.value,
+        warmup: workoutWarmupInput.checked,
+        warmupText: workoutWarmupText.value,
+        sets: {},
+        comments: {},
+        descriptions: {},
+    };
+    workoutExercisesEl.querySelectorAll('.exercise-card').forEach(card => {
+        const setContainer = card.querySelector('.exercise-sets');
+        if (!setContainer) return;
+        const exId = setContainer.getAttribute('data-ex-id');
+        const sets = [];
+        setContainer.querySelectorAll('.set-row').forEach(row => {
+            const kgRaw = row.querySelector('.set-kg').value;
+            const repsRaw = row.querySelector('.set-reps').value;
+            sets.push({ kg: kgRaw, reps: repsRaw });
+        });
+        draft.sets[exId] = sets;
+        const commentEl = card.querySelector('.exercise-comment');
+        const descEl = card.querySelector('.exercise-description');
+        if (commentEl) draft.comments[exId] = commentEl.value;
+        if (descEl) draft.descriptions[exId] = descEl.value;
+    });
+    return draft;
+}
+
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
 export async function getResolvedPlan(id, customPlans) {
@@ -325,6 +378,91 @@ export async function openWorkout(dayId, customPlans, trainingHistory, els) {
             }
         });
     }
+
+    // ─── Draft restore + autosave ────────────────────────────────────────
+    // Restore previous draft for this plan (if any). The draft wins over
+    // last-values / lastWorkout suggestions because it represents the user's
+    // current, unfinished workout.
+    const draft = await getWorkoutDraft(dayId);
+    if (draft) {
+        if (draft.dateStr && draft.dateStr <= todayKey) workoutDateInput.value = draft.dateStr;
+        if (typeof draft.warmup === 'boolean') workoutWarmupInput.checked = draft.warmup;
+        if (typeof draft.warmupText === 'string') workoutWarmupText.value = draft.warmupText;
+        workoutExercisesEl.querySelectorAll('.exercise-card').forEach(card => {
+            const setContainer = card.querySelector('.exercise-sets');
+            if (!setContainer) return;
+            const exId = setContainer.getAttribute('data-ex-id');
+            const draftSets = draft.sets?.[exId];
+            if (Array.isArray(draftSets)) {
+                setContainer.querySelectorAll('.set-row').forEach((row, i) => {
+                    const ds = draftSets[i];
+                    if (!ds) return;
+                    // Empty strings are valid (the user might have cleared the
+                    // pre-filled kg from a previous workout intentionally).
+                    if (ds.kg !== undefined) row.querySelector('.set-kg').value = ds.kg;
+                    if (ds.reps !== undefined) row.querySelector('.set-reps').value = ds.reps;
+                });
+            }
+            const commentEl = card.querySelector('.exercise-comment');
+            const descEl = card.querySelector('.exercise-description');
+            if (commentEl && draft.comments && exId in draft.comments) commentEl.value = draft.comments[exId];
+            if (descEl && draft.descriptions && exId in draft.descriptions) descEl.value = draft.descriptions[exId];
+        });
+        showDraftStatus(els, `Entwurf wiederhergestellt (${formatDraftTime(draft.savedAt)})`);
+    }
+
+    // Debounced autosave on any input/change in the workout view. 400 ms is
+    // long enough to batch fast typing on the comment field, short enough
+    // to feel responsive on the set inputs.
+    let saveTimer = null;
+    let saveSeq = 0;
+    const scheduleSave = () => {
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(async () => {
+            const mySeq = ++saveSeq;
+            const snap = snapshotWorkoutDraft(els);
+            await saveWorkoutDraft(dayId, snap);
+            // Skip the status flash if a newer save kicked off in the meantime.
+            if (mySeq === saveSeq) showDraftStatus(els, '💾 Entwurf gespeichert');
+        }, 400);
+    };
+    const events = ['input', 'change'];
+    [workoutDateInput, workoutWarmupInput, workoutWarmupText].forEach(el => {
+        events.forEach(ev => el.addEventListener(ev, scheduleSave));
+    });
+    workoutExercisesEl.addEventListener('input', scheduleSave);
+    workoutExercisesEl.addEventListener('change', scheduleSave);
+}
+
+// Brief inline status line below the workout title. Lazily created so we
+// don't have to touch index.html for every minor surface.
+function showDraftStatus(els, msg) {
+    const { workoutView } = els;
+    let el = workoutView.querySelector('.workout-draft-status');
+    if (!el) {
+        el = document.createElement('div');
+        el.className = 'workout-draft-status';
+        // Anchor right under the workout title.
+        const title = workoutView.querySelector('#workout-title');
+        if (title && title.parentNode) {
+            title.parentNode.insertBefore(el, title.nextSibling);
+        } else {
+            workoutView.prepend(el);
+        }
+    }
+    el.textContent = msg;
+    el.classList.remove('flash');
+    void el.offsetWidth;
+    el.classList.add('flash');
+}
+
+function formatDraftTime(ts) {
+    if (!ts) return '';
+    const diffSec = Math.round((Date.now() - ts) / 1000);
+    if (diffSec < 60) return 'gerade eben';
+    if (diffSec < 3600) return `vor ${Math.round(diffSec / 60)} min`;
+    const d = new Date(ts);
+    return d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 // ─── New Exercise Inline Modal ───────────────────────────────────────────────
@@ -503,6 +641,9 @@ export async function finishWorkout(dayId, customPlans, trainingHistory, dailyHi
 
     // Wait for all save promises
     await Promise.all(savePromises);
+
+    // Workout is committed → discard the autosave draft for this plan.
+    await clearWorkoutDraft(dayId);
 
     return { points, improvedExercises };
 }

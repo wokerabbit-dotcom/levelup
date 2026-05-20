@@ -808,6 +808,24 @@ button {
     background: rgba(255,255,255,0.15);
 }
 
+/* Workout draft status — appears under the workout title and flashes
+   briefly each time autosave fires. */
+.workout-draft-status {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: -8px 0 14px;
+    min-height: 1.1em;
+    transition: opacity 0.25s ease;
+}
+.workout-draft-status.flash {
+    animation: draft-flash 1.6s ease-out 1;
+}
+@keyframes draft-flash {
+    0%   { color: var(--success-color); opacity: 1; }
+    60%  { color: var(--success-color); opacity: 1; }
+    100% { color: var(--text-muted);    opacity: 0.85; }
+}
+
 /* Streak */
 .streak-display {
     text-align: center;
