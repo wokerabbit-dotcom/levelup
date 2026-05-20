@@ -3,26 +3,31 @@ import * as storage from './storage.js';
 import * as Training from './training.js';
 
 // ─── Default Routine Tasks (from habit list) ─────────────────────────────────
+// Balancing target: a productive non-training day reaches ~200–300 pts so a
+// training day (~350–500 pts) feels meaningful but not 5× larger. Update the
+// REBALANCE_VERSION below if you change any value and want the change to flow
+// to existing installs whose tasks still carry the default id+name.
 const DEFAULT_TASKS = [
     { name: 'Bett machen',                    points: 5,    unit: 'Durchführung', category: 'routine' },
-    { name: 'Kalt Duschen',                   points: 15,   unit: 'Durchführung', category: 'routine' },
-    { name: 'Joggen',                         points: 2,    unit: 'Minute',       category: 'routine' },
-    { name: 'Aufräumen / Sauber Machen',      points: 1,    unit: 'Minute',       category: 'routine' },
-    { name: 'Liegestütze',                    points: 0.5,  unit: 'Stück',        category: 'routine' },
-    { name: 'Situps',                         points: 0.2,  unit: 'Stück',        category: 'routine' },
-    { name: 'Pull Ups',                       points: 1,    unit: 'Stück',        category: 'routine' },
-    { name: 'Schritte',                       points: 0.005,unit: 'Schritt',      category: 'routine' },
-    { name: 'An To-Do Punkt arbeiten',        points: 1,    unit: 'Minute',       category: 'routine' },
-    { name: 'To-Do Punkt abgehakt',           points: 20,   unit: 'Durchführung', category: 'routine' },
-    { name: 'Gitarre lernen',                 points: 1,    unit: 'Minute',       category: 'routine' },
-    { name: 'Produktives Arbeiten (Arbeit)',   points: 5,    unit: '30 Minuten',   category: 'routine' },
-    { name: 'Sonstiges (sinnvolles) Lernen',  points: 1,    unit: 'Minute',       category: 'routine' },
-    { name: 'Psychologielektüre',             points: 2,    unit: 'Minute',       category: 'routine' },
-    { name: 'Lesen',                          points: 1,    unit: 'gelesene Seite', category: 'routine' },
-    { name: 'Meditieren',                     points: 2,    unit: 'Minute',       category: 'routine' },
-    { name: 'Kochen',                         points: 25,   unit: 'Kochgang',     category: 'routine' },
-    { name: 'Tagebuch schreiben',             points: 15,   unit: 'Durchführung', category: 'routine' },
+    { name: 'Kalt Duschen',                   points: 25,   unit: 'Durchführung', category: 'routine' },
+    { name: 'Joggen',                         points: 3,    unit: 'Minute',       category: 'routine' },
+    { name: 'Aufräumen / Sauber Machen',      points: 2,    unit: 'Minute',       category: 'routine' },
+    { name: 'Liegestütze',                    points: 1,    unit: 'Stück',        category: 'routine' },
+    { name: 'Situps',                         points: 0.4,  unit: 'Stück',        category: 'routine' },
+    { name: 'Pull Ups',                       points: 2.5,  unit: 'Stück',        category: 'routine' },
+    { name: 'Schritte',                       points: 0.008,unit: 'Schritt',      category: 'routine' },
+    { name: 'An To-Do Punkt arbeiten',        points: 2,    unit: 'Minute',       category: 'routine' },
+    { name: 'To-Do Punkt abgehakt',           points: 30,   unit: 'Durchführung', category: 'routine' },
+    { name: 'Gitarre lernen',                 points: 2,    unit: 'Minute',       category: 'routine' },
+    { name: 'Produktives Arbeiten (Arbeit)',  points: 10,   unit: '30 Minuten',   category: 'routine' },
+    { name: 'Sonstiges (sinnvolles) Lernen',  points: 2,    unit: 'Minute',       category: 'routine' },
+    { name: 'Psychologielektüre',             points: 3,    unit: 'Minute',       category: 'routine' },
+    { name: 'Lesen',                          points: 1.5,  unit: 'gelesene Seite', category: 'routine' },
+    { name: 'Meditieren',                     points: 3,    unit: 'Minute',       category: 'routine' },
+    { name: 'Kochen',                         points: 30,   unit: 'Kochgang',     category: 'routine' },
+    { name: 'Tagebuch schreiben',             points: 20,   unit: 'Durchführung', category: 'routine' },
 ];
+const TASK_REBALANCE_VERSION = 1;
 
 // ─── App State ────────────────────────────────────────────────────────────────
 let tasks = [];
@@ -235,6 +240,24 @@ async function init() {
     if (tasks.length === 0) {
         tasks = DEFAULT_TASKS.map((t, i) => ({ ...t, id: 'default_' + i }));
         await storage.set('tasks', tasks);
+    }
+
+    // One-time rebalance of default tasks. Only touches tasks whose id is
+    // `default_N` AND whose name still matches the seed at index N — so any
+    // task the user renamed or edited is left alone.
+    const rebalanceVer = await storage.get('taskRebalanceVersion', 0);
+    if (rebalanceVer < TASK_REBALANCE_VERSION) {
+        let changed = 0;
+        tasks.forEach(t => {
+            if (!t.id || !t.id.startsWith('default_')) return;
+            const idx = parseInt(t.id.slice('default_'.length), 10);
+            const def = DEFAULT_TASKS[idx];
+            if (!def || t.name !== def.name) return;
+            if (t.points !== def.points) { t.points = def.points; changed++; }
+        });
+        if (changed) await storage.set('tasks', tasks);
+        await storage.set('taskRebalanceVersion', TASK_REBALANCE_VERSION);
+        if (changed) showToast(`${changed} Standard-Aufgaben neu balanciert.`, 'success', null, 5000);
     }
 
     // Initialize global exercise library
